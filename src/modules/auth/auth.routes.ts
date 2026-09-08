@@ -23,10 +23,11 @@ const loginRateLimiter = rateLimit({
 });
 
 function cookieOptions(expires?: Date): CookieOptions {
+  const isProduction = env.NODE_ENV === 'production';
   const options: CookieOptions = {
     httpOnly: true,
-    secure: env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
     path: '/',
   };
 
