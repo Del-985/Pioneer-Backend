@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireRouteParam } from '../../lib/route-param.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { createLegalEntitySchema, updateLegalEntitySchema } from './admin-legal-entity.schemas.js';
 import {
@@ -20,8 +21,9 @@ adminLegalEntityRouter.post('/', requireAuth, async (req, res) => {
 });
 
 adminLegalEntityRouter.patch('/:legalEntityId', requireAuth, async (req, res) => {
+  const legalEntityId = requireRouteParam(req, 'legalEntityId');
   const input = updateLegalEntitySchema.parse(req.body);
   res.json({
-    data: await updateLegalEntity(req.auth!.userId, req.params.legalEntityId, input),
+    data: await updateLegalEntity(req.auth!.userId, legalEntityId, input),
   });
 });
