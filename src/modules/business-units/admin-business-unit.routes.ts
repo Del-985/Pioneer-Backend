@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.js';
+import { requireRouteParam } from '../../lib/route-param.js';
 import { adminContactRouter } from '../contacts/admin-contact.routes.js';
 import { adminCustomerRouter } from '../customers/admin-customer.routes.js';
 import {
@@ -37,25 +38,28 @@ adminBusinessUnitRouter.use('/:businessUnitId/contacts', adminContactRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/customers', adminCustomerRouter);
 
 adminBusinessUnitRouter.get('/:businessUnitId/features', requireAuth, async (req, res) => {
+  const businessUnitId = requireRouteParam(req, 'businessUnitId');
   res.json({
-    data: await listBusinessUnitFeatures(req.auth!.userId, req.params.businessUnitId),
+    data: await listBusinessUnitFeatures(req.auth!.userId, businessUnitId),
   });
 });
 
 adminBusinessUnitRouter.put('/:businessUnitId/features', requireAuth, async (req, res) => {
+  const businessUnitId = requireRouteParam(req, 'businessUnitId');
   const input = updateBusinessUnitFeaturesSchema.parse(req.body);
   res.json({
     data: await updateBusinessUnitFeatures(
       req.auth!.userId,
-      req.params.businessUnitId,
+      businessUnitId,
       input.features
     ),
   });
 });
 
 adminBusinessUnitRouter.patch('/:businessUnitId', requireAuth, async (req, res) => {
+  const businessUnitId = requireRouteParam(req, 'businessUnitId');
   const input = updateBusinessUnitSchema.parse(req.body);
   res.json({
-    data: await updateBusinessUnit(req.auth!.userId, req.params.businessUnitId, input),
+    data: await updateBusinessUnit(req.auth!.userId, businessUnitId, input),
   });
 });
