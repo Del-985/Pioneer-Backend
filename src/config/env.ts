@@ -14,10 +14,24 @@ const envSchema = z.object({
   BOOTSTRAP_ADMIN_EMAIL: z.string().trim().email().optional(),
   BOOTSTRAP_ADMIN_NAME: z.string().trim().min(1).max(120).optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(12).max(200).optional(),
+  SMTP_HOST: z.string().trim().min(1).optional(),
+  SMTP_PORT: z.coerce.number().int().positive().max(65535).default(587),
+  SMTP_SECURE: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  SMTP_FROM: z.string().trim().min(1).max(320).optional(),
+  PASSWORD_RESET_URL: z.string().url().optional(),
+  NOTIFICATION_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25),
+}).superRefine((value, ctx) => {
+  if (value.SMTP_HOST && !value.SMTP_FROM) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['SMTP_FROM'], message: 'SMTP_FROM is required when SMTP_HOST is configured.' });
+  }
+  if ((value.SMTP_USER && !value.SMTP_PASSWORD) || (!value.SMTP_USER && value.SMTP_PASSWORD)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['SMTP_PASSWORD'], message: 'SMTP_USER and SMTP_PASSWORD must be configured together.' });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);
-
 if (!parsed.success) {
   console.error('Invalid environment configuration:', parsed.error.flatten().fieldErrors);
   process.exit(1);

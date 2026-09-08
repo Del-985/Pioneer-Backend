@@ -1,0 +1,13 @@
+import { z } from 'zod';
+import { paginationQuerySchema } from '../../lib/pagination.js';
+
+const status=z.enum(['draft','posted','void']);
+export const expenseListQuerySchema=paginationQuerySchema.extend({status:status.optional(),from:z.string().date().optional(),to:z.string().date().optional(),search:z.string().trim().max(200).optional()});
+export const createExpenseSchema=z.object({expenseDate:z.string().date(),vendor:z.string().trim().max(200).nullable().optional(),description:z.string().trim().min(1).max(1000),amountCents:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER),expenseAccountId:z.string().uuid().nullable().optional(),paymentAccountId:z.string().uuid().nullable().optional(),receiptFileId:z.string().uuid().nullable().optional()});
+export const updateExpenseSchema=z.object({expenseDate:z.string().date().optional(),vendor:z.string().trim().max(200).nullable().optional(),description:z.string().trim().min(1).max(1000).optional(),amountCents:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),expenseAccountId:z.string().uuid().nullable().optional(),paymentAccountId:z.string().uuid().nullable().optional(),receiptFileId:z.string().uuid().nullable().optional(),status:z.enum(['draft','void']).optional()}).refine(v=>Object.keys(v).length>0,{message:'At least one field is required.'});
+export const postExpenseSchema=z.object({entryNumber:z.string().trim().min(1).max(80)});
+
+export const revenueListQuerySchema=paginationQuerySchema.extend({status:status.optional(),from:z.string().date().optional(),to:z.string().date().optional(),customerId:z.string().uuid().optional(),search:z.string().trim().max(200).optional()});
+export const createRevenueSchema=z.object({revenueDate:z.string().date(),customerId:z.string().uuid().nullable().optional(),description:z.string().trim().min(1).max(1000),amountCents:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER),revenueAccountId:z.string().uuid().nullable().optional(),depositAccountId:z.string().uuid().nullable().optional()});
+export const updateRevenueSchema=z.object({revenueDate:z.string().date().optional(),customerId:z.string().uuid().nullable().optional(),description:z.string().trim().min(1).max(1000).optional(),amountCents:z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),revenueAccountId:z.string().uuid().nullable().optional(),depositAccountId:z.string().uuid().nullable().optional(),status:z.enum(['draft','void']).optional()}).refine(v=>Object.keys(v).length>0,{message:'At least one field is required.'});
+export const postRevenueSchema=z.object({entryNumber:z.string().trim().min(1).max(80)});

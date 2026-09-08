@@ -1,0 +1,7 @@
+import { z } from 'zod';
+import { paginationQuerySchema } from '../../lib/pagination.js';
+
+const status=z.enum(['active','inactive','terminated']);
+export const employeeListQuerySchema=paginationQuerySchema.extend({status:status.optional(),search:z.string().trim().max(200).optional()});
+export const createEmployeeSchema=z.object({userId:z.string().uuid().nullable().optional(),employeeNumber:z.string().trim().max(80).nullable().optional(),displayName:z.string().trim().min(1).max(200),email:z.string().trim().email().max(254).nullable().optional(),phone:z.string().trim().max(80).nullable().optional(),jobTitle:z.string().trim().max(160).nullable().optional(),hireDate:z.string().date().nullable().optional(),notes:z.string().trim().max(5000).nullable().optional()});
+export const updateEmployeeSchema=z.object({userId:z.string().uuid().nullable().optional(),employeeNumber:z.string().trim().max(80).nullable().optional(),displayName:z.string().trim().min(1).max(200).optional(),email:z.string().trim().email().max(254).nullable().optional(),phone:z.string().trim().max(80).nullable().optional(),jobTitle:z.string().trim().max(160).nullable().optional(),hireDate:z.string().date().nullable().optional(),terminationDate:z.string().date().nullable().optional(),status:status.optional(),notes:z.string().trim().max(5000).nullable().optional()}).refine(v=>Object.keys(v).length>0,{message:'At least one field is required.'});

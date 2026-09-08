@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireRouteParam } from '../../lib/route-param.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { customerAddressRouter } from './customer-address.routes.js';
 import {
   createCustomerSchema,
   customerListQuerySchema,
@@ -27,16 +28,11 @@ adminCustomerRouter.post('/', requireAuth, async (req, res) => {
   res.status(201).json({ data });
 });
 
+adminCustomerRouter.use('/:customerId/addresses', customerAddressRouter);
+
 adminCustomerRouter.patch('/:customerId', requireAuth, async (req, res) => {
   const businessUnitId = requireRouteParam(req, 'businessUnitId');
   const customerId = requireRouteParam(req, 'customerId');
   const input = updateCustomerSchema.parse(req.body);
-  res.json({
-    data: await updateCustomer(
-      req.auth!.userId,
-      businessUnitId,
-      customerId,
-      input
-    ),
-  });
+  res.json({ data: await updateCustomer(req.auth!.userId, businessUnitId, customerId, input) });
 });

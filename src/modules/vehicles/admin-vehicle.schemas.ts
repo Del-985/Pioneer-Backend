@@ -1,0 +1,7 @@
+import { z } from 'zod';
+import { paginationQuerySchema } from '../../lib/pagination.js';
+
+const status=z.enum(['active','inactive','maintenance','retired']);
+export const vehicleListQuerySchema=paginationQuerySchema.extend({status:status.optional(),search:z.string().trim().max(200).optional()});
+export const createVehicleSchema=z.object({name:z.string().trim().min(1).max(200),year:z.coerce.number().int().min(1900).max(2200).nullable().optional(),make:z.string().trim().max(120).nullable().optional(),model:z.string().trim().max(120).nullable().optional(),vin:z.string().trim().max(80).nullable().optional(),licensePlate:z.string().trim().max(40).nullable().optional(),currentOdometer:z.coerce.number().min(0).nullable().optional(),status:status.default('active'),notes:z.string().trim().max(5000).nullable().optional()});
+export const updateVehicleSchema=z.object({name:z.string().trim().min(1).max(200).optional(),year:z.coerce.number().int().min(1900).max(2200).nullable().optional(),make:z.string().trim().max(120).nullable().optional(),model:z.string().trim().max(120).nullable().optional(),vin:z.string().trim().max(80).nullable().optional(),licensePlate:z.string().trim().max(40).nullable().optional(),currentOdometer:z.coerce.number().min(0).nullable().optional(),status:status.optional(),notes:z.string().trim().max(5000).nullable().optional()}).refine(v=>Object.keys(v).length>0,{message:'At least one field is required.'});
