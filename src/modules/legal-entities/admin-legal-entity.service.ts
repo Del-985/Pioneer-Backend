@@ -96,10 +96,10 @@ export async function updateLegalEntity(
   actorUserId: string,
   legalEntityId: string,
   input: {
-    legalName?: string;
-    displayName?: string;
-    slug?: string;
-    status?: 'active' | 'inactive';
+    legalName?: string | undefined;
+    displayName?: string | undefined;
+    slug?: string | undefined;
+    status?: 'active' | 'inactive' | undefined;
   }
 ) {
   const existing = await pool.query<{ id: string }>(
