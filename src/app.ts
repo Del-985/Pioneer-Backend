@@ -9,11 +9,15 @@ import { apiRouter } from './routes/api.routes.js';
 
 export const app = express();
 
+const createHttpLogger = pinoHttp as unknown as (
+  options: { logger: typeof logger }
+) => express.RequestHandler;
+
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
 app.use(helmet());
-app.use(pinoHttp({ logger }));
+app.use(createHttpLogger({ logger }));
 app.use(cors({
   credentials: true,
   origin(origin, callback) {
