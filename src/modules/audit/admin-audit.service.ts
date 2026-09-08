@@ -4,8 +4,8 @@ import { HttpError } from '../../lib/http-error.js';
 type AuditFilters = {
   limit: number;
   offset: number;
-  action?: string;
-  resourceType?: string;
+  action?: string | undefined;
+  resourceType?: string | undefined;
 };
 
 type AuditRow = {
