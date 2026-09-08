@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/auth.js';
+import { adminContactRouter } from '../contacts/admin-contact.routes.js';
+import { adminCustomerRouter } from '../customers/admin-customer.routes.js';
 import {
   businessUnitListQuerySchema,
   createBusinessUnitSchema,
@@ -30,6 +32,9 @@ adminBusinessUnitRouter.post('/', requireAuth, async (req, res) => {
   const data = await createBusinessUnit(req.auth!.userId, input);
   res.status(201).json({ data });
 });
+
+adminBusinessUnitRouter.use('/:businessUnitId/contacts', adminContactRouter);
+adminBusinessUnitRouter.use('/:businessUnitId/customers', adminCustomerRouter);
 
 adminBusinessUnitRouter.get('/:businessUnitId/features', requireAuth, async (req, res) => {
   res.json({
