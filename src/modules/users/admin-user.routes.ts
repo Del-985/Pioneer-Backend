@@ -17,12 +17,28 @@ import {
 
 export const adminUserRouter = Router();
 
+function normalizeAssignment(input) {
+  return {
+    roleId: input.roleId,
+    ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}),
+    ...(input.businessUnitId ? { businessUnitId: input.businessUnitId } : {}),
+  };
+}
+
 adminUserRouter.get('/', requireAuth, async (req, res) => {
   res.json({ data: await listAccessibleUsers(req.auth!.userId) });
 });
 
 adminUserRouter.post('/', requireAuth, async (req, res) => {
-  const input = createUserSchema.parse(req.body);
+  const parsed = createUserSchema.parse(req.body);
+  const input = {
+    email: parsed.email,
+    displayName: parsed.displayName,
+    password: parsed.password,
+    ...(parsed.initialAssignment
+      ? { initialAssignment: normalizeAssignment(parsed.initialAssignment) }
+      : {}),
+  };
   const data = await createUser(req.auth!.userId, input);
   res.status(201).json({ data });
 });
@@ -42,7 +58,8 @@ adminUserRouter.get('/:userId/role-assignments', requireAuth, async (req, res) =
 
 adminUserRouter.post('/:userId/role-assignments', requireAuth, async (req, res) => {
   const userId = requireRouteParam(req, 'userId');
-  const input = createRoleAssignmentSchema.parse(req.body);
+  const parsed = createRoleAssignmentSchema.parse(req.body);
+  const input = normalizeAssignment(parsed);
   const data = await assignRoleToUser(req.auth!.userId, userId, input);
   res.status(201).json({ data });
 });
