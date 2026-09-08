@@ -68,7 +68,7 @@ Modules may share infrastructure, but business rules should remain inside the mo
 
 ## API conventions
 
-All application routes live below `/api/v1`. Breaking API changes require a new API version or a controlled migration of every client.
+Application routes live below the stable `/api` namespace. API versions are not encoded in URL paths. Compatible changes should evolve the existing contract; incompatible changes should be handled deliberately through coordinated client migrations or other compatibility mechanisms rather than accumulating permanent versioned route trees.
 
 Operational records that belong to a business must carry sufficient ownership information to enforce their legal-entity and business-unit boundaries at the backend/database layer.
 
@@ -86,4 +86,4 @@ Accounting writes remain subject to the same legal-entity/business-unit scope ru
 
 ## Non-goals for the foundation
 
-The initial platform foundation does not yet expose unauthenticated CRUD routes for legal entities, business units, users, or roles. Those endpoints should be added only alongside authentication, permission middleware, validation, and auditing.
+The initial platform foundation does not expose unauthenticated CRUD routes for legal entities, business units, users, or roles. Administrative endpoints must be protected by authentication, permission middleware, validation, and auditing.

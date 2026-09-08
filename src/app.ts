@@ -5,7 +5,7 @@ import pinoHttp from 'pino-http';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
-import { v1Router } from './routes/v1.routes.js';
+import { apiRouter } from './routes/api.routes.js';
 
 export const app = express();
 
@@ -27,7 +27,7 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '1mb' }));
 
-app.use('/api/v1', v1Router);
+app.use('/api', apiRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

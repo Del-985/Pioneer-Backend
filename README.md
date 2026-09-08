@@ -10,7 +10,7 @@ Shared backend platform for Pioneer Legacy Works and its business units, website
 - Authorization and business/entity isolation are enforced by the backend, never only by frontend filters.
 - Users are platform identities. Access to business data is granted through scoped role assignments.
 - `All Businesses` is a reporting concern; it does not bypass entity isolation for mutations.
-- The API is versioned under `/api/v1` from the beginning.
+- Public application routes live under the stable `/api` namespace without a version segment in the URL.
 - PostgreSQL is the primary system of record.
 
 ## Initial stack
@@ -32,7 +32,7 @@ Shared backend platform for Pioneer Legacy Works and its business units, website
 5. Run `npm run migrate`.
 6. Run `npm run dev`.
 
-The first public endpoint is `GET /api/v1/health`.
+The first public endpoint is `GET /api/health`.
 
 ## Core data hierarchy
 

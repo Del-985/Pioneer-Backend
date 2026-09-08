@@ -6,7 +6,7 @@ The parent site is registered as the platform-scoped site key `pioneer-legacy-wo
 
 ## Public API
 
-All routes are below `/api/v1/public/sites`.
+All public parent-site routes are below `/api/public/sites`.
 
 ### `GET /pioneer-legacy-works`
 
@@ -57,6 +57,18 @@ The website layer adds these tables:
 
 A site can be scoped to the whole platform, one legal entity, or one business unit. The parent site uses platform scope. Future division websites can therefore reuse the same API module without creating another backend.
 
+## Authentication API
+
+Authentication routes are below `/api/auth`:
+
+- `POST /login`
+- `POST /logout`
+- `GET /me`
+
+Authentication uses revocable server-side sessions.
+
 ## Administrative API
 
-Administrative CRUD endpoints are intentionally not part of this module yet. Site content, business-unit publication settings, and contact management will be exposed only after authentication and organization-aware authorization middleware are in place.
+Protected parent-site administration routes are below `/api/admin/sites/:siteKey` and cover site/profile management, page publishing, public business-unit profiles, contact review, and contact status updates.
+
+Administrative access is enforced using the shared platform role/permission system and the organizational scope of the site.
