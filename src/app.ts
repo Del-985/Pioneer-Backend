@@ -4,7 +4,9 @@ import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { HttpError } from './lib/http-error.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
+import { requireTrustedMutationOrigin } from './middleware/request-integrity.js';
 import { apiRouter } from './routes/api.routes.js';
 
 export const app = express();
@@ -26,9 +28,10 @@ app.use(cors({
       return;
     }
 
-    callback(new Error('Origin not allowed by CORS policy'));
+    callback(new HttpError(403, 'CORS_ORIGIN_DENIED', 'Origin not allowed by CORS policy.'));
   },
 }));
+app.use(requireTrustedMutationOrigin);
 app.use(express.json({ limit: '1mb' }));
 
 app.use('/api', apiRouter);

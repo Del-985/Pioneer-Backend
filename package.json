@@ -1,6 +1,6 @@
 {
   "name": "pioneer-backend",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,8 +11,10 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/db/migrate.js && node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/**/*.test.ts",
     "migrate": "tsx src/db/migrate.ts",
-    "bootstrap-admin": "tsx src/db/bootstrap-admin.ts"
+    "bootstrap-admin": "tsx src/db/bootstrap-admin.ts",
+    "cleanup-sessions": "tsx src/db/cleanup-sessions.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

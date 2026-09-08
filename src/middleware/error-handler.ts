@@ -2,6 +2,7 @@ import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { ZodError } from 'zod';
 import { logger } from '../config/logger.js';
 import { HttpError } from '../lib/http-error.js';
+import { mapDatabaseError } from '../lib/pg-error.js';
 
 export const notFoundHandler: RequestHandler = (req, res) => {
   res.status(404).json({
@@ -24,16 +25,17 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
     return;
   }
 
-  if (error instanceof HttpError) {
-    if (error.statusCode >= 500) {
+  const httpError = error instanceof HttpError ? error : mapDatabaseError(error);
+  if (httpError) {
+    if (httpError.statusCode >= 500) {
       logger.error({ err: error, method: req.method, url: req.originalUrl }, 'Request failed');
     }
 
-    res.status(error.statusCode).json({
+    res.status(httpError.statusCode).json({
       error: {
-        code: error.code,
-        message: error.message,
-        ...(error.details === undefined ? {} : { details: error.details }),
+        code: httpError.code,
+        message: httpError.message,
+        ...(httpError.details === undefined ? {} : { details: httpError.details }),
       },
     });
     return;

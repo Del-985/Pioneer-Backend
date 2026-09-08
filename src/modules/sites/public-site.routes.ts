@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
+import { PostgresRateLimitStore } from '../../lib/postgres-rate-limit-store.js';
 import {
   pageSlugSchema,
   parseContactSubmission,
@@ -19,6 +20,7 @@ const contactRateLimiter = rateLimit({
   limit: 10,
   standardHeaders: 'draft-8',
   legacyHeaders: false,
+  store: new PostgresRateLimitStore('public-contact'),
   message: {
     error: {
       code: 'RATE_LIMITED',
@@ -50,7 +52,6 @@ publicSiteRouter.post('/:siteKey/contact', contactRateLimiter, async (req, res) 
   const siteKey = siteKeySchema.parse(req.params.siteKey);
   const input = parseContactSubmission(req.body);
 
-  // Honeypot field: acknowledge likely bot submissions without storing them.
   if (input.website) {
     res.status(202).json({ data: { accepted: true } });
     return;
