@@ -147,9 +147,9 @@ export async function updateBusinessUnit(
   actorUserId: string,
   businessUnitId: string,
   input: {
-    name?: string;
-    slug?: string;
-    status?: 'active' | 'inactive';
+    name?: string | undefined;
+    slug?: string | undefined;
+    status?: 'active' | 'inactive' | undefined;
   }
 ) {
   const existing = await pool.query<{ legal_entity_id: string }>(
