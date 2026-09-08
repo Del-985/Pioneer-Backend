@@ -3,7 +3,7 @@ import { pool } from '../../db/pool.js';
 import { HttpError } from '../../lib/http-error.js';
 import { assertBusinessUnitPermission } from '../access/authorization.service.js';
 import { writeAuditEvent } from '../audit/admin-audit.service.js';
-import type {
+import {
   createCustomerSchema,
   customerListQuerySchema,
   updateCustomerSchema,
