@@ -17,7 +17,13 @@ import {
 
 export const adminUserRouter = Router();
 
-function normalizeAssignment(input) {
+type AssignmentPayload = {
+  roleId: string;
+  legalEntityId?: string | undefined;
+  businessUnitId?: string | undefined;
+};
+
+function normalizeAssignment(input: AssignmentPayload) {
   return {
     roleId: input.roleId,
     ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}),
