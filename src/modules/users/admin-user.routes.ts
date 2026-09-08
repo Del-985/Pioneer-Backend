@@ -51,7 +51,12 @@ adminUserRouter.post('/', requireAuth, async (req, res) => {
 
 adminUserRouter.patch('/:userId', requireAuth, async (req, res) => {
   const userId = requireRouteParam(req, 'userId');
-  const input = updateUserSchema.parse(req.body);
+  const parsed = updateUserSchema.parse(req.body);
+  const input = {
+    ...(parsed.email !== undefined ? { email: parsed.email } : {}),
+    ...(parsed.displayName !== undefined ? { displayName: parsed.displayName } : {}),
+    ...(parsed.status !== undefined ? { status: parsed.status } : {}),
+  };
   res.json({ data: await updateUser(req.auth!.userId, userId, input) });
 });
 
