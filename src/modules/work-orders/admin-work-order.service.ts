@@ -61,11 +61,11 @@ async function existsInUnit(table: string, id: string | null | undefined, busine
 }
 
 async function validateRelations(businessUnitId: string, input: {
-  customerId?: string;
-  estimateId?: string | null;
-  scheduleEntryId?: string | null;
-  serviceAddressId?: string | null;
-  assignedEmployeeId?: string | null;
+  customerId?: string | undefined;
+  estimateId?: string | null | undefined;
+  scheduleEntryId?: string | null | undefined;
+  serviceAddressId?: string | null | undefined;
+  assignedEmployeeId?: string | null | undefined;
 }) {
   if (input.customerId) await existsInUnit('customers', input.customerId, businessUnitId, 'INVALID_CUSTOMER', 'Customer does not belong to this business unit.');
   await existsInUnit('estimates', input.estimateId, businessUnitId, 'INVALID_ESTIMATE', 'Estimate does not belong to this business unit.');
