@@ -34,27 +34,41 @@ adminFormRouter.post('/', requireAuth, async (req, res) => {
 
 adminFormRouter.post('/upload-intent', requireAuth, async (req, res) => {
   const businessUnitId = requireRouteParam(req, 'businessUnitId');
+  const data = await createFormUploadIntent(
+    req.auth!.userId,
+    businessUnitId,
+    createFormUploadIntentSchema.parse(req.body)
+  );
+
   res.status(201).json({
-    data: await createFormUploadIntent(
-      req.auth!.userId,
-      businessUnitId,
-      createFormUploadIntentSchema.parse(req.body)
-    ),
+    data: data.upload.provider === 'database'
+      ? { ...data, upload: { ...data.upload, method: 'POST' } }
+      : data,
   });
 });
 
+async function storeDatabaseFormContent(req: express.Request, res: express.Response) {
+  const businessUnitId = requireRouteParam(req, 'businessUnitId');
+  const formId = requireRouteParam(req, 'formId');
+  if (!Buffer.isBuffer(req.body)) {
+    throw new HttpError(400, 'FORM_FILE_REQUIRED', 'A form file is required.');
+  }
+  res.json({ data: await storeFormContent(req.auth!.userId, businessUnitId, formId, req.body) });
+}
+
+adminFormRouter.post(
+  '/:formId/content',
+  requireAuth,
+  express.raw({ type: 'application/octet-stream', limit: '25mb' }),
+  storeDatabaseFormContent
+);
+
+// Keep PUT available for older clients, even though the production API edge currently rejects it.
 adminFormRouter.put(
   '/:formId/content',
   requireAuth,
   express.raw({ type: 'application/octet-stream', limit: '25mb' }),
-  async (req, res) => {
-    const businessUnitId = requireRouteParam(req, 'businessUnitId');
-    const formId = requireRouteParam(req, 'formId');
-    if (!Buffer.isBuffer(req.body)) {
-      throw new HttpError(400, 'FORM_FILE_REQUIRED', 'A form file is required.');
-    }
-    res.json({ data: await storeFormContent(req.auth!.userId, businessUnitId, formId, req.body) });
-  }
+  storeDatabaseFormContent
 );
 
 adminFormRouter.get('/:formId/content', requireAuth, async (req, res) => {
