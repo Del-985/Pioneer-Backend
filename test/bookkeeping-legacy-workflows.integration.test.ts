@@ -56,9 +56,9 @@ async function seed() {
     [ids.user]
   );
   await pool.query(
-    `INSERT INTO ledger_accounts (id,legal_entity_id,code,name,account_type,control_type)
-     VALUES ($1,$3,'1000','Operating Cash','asset','cash'),
-            ($2,$3,'4000','Service Revenue','revenue',NULL)`,
+    `INSERT INTO ledger_accounts (id,legal_entity_id,code,name,account_type,is_system,control_type)
+     VALUES ($1,$3,'1000','Operating Cash','asset',true,'cash'),
+            ($2,$3,'4000','Service Revenue','revenue',false,NULL)`,
     [ids.cash, ids.revenue, ids.entity]
   );
   await pool.query(
