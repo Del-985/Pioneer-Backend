@@ -14,6 +14,12 @@ export const accountControlTypeSchema = z.enum([
   'intercompany_payable',
 ]);
 
+const accountCodeSchema = z.string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^\d+$/, 'Account code must contain digits only.');
+
 export const bookkeepingAccountListQuerySchema = paginationQuerySchema.extend({
   accountType: accountTypeSchema.optional(),
   includeInactive: z.enum(['true', 'false']).optional().transform((value) => value === 'true'),
@@ -22,7 +28,7 @@ export const bookkeepingAccountListQuerySchema = paginationQuerySchema.extend({
 
 export const createBookkeepingAccountSchema = z.object({
   parentAccountId: z.string().uuid().nullable().optional(),
-  code: z.string().trim().min(1).max(80),
+  code: accountCodeSchema,
   name: z.string().trim().min(1).max(200),
   description: z.string().trim().max(1000).nullable().optional(),
   accountType: accountTypeSchema,
@@ -37,7 +43,7 @@ export const createBookkeepingAccountSchema = z.object({
 
 export const updateBookkeepingAccountSchema = z.object({
   parentAccountId: z.string().uuid().nullable().optional(),
-  code: z.string().trim().min(1).max(80).optional(),
+  code: accountCodeSchema.optional(),
   name: z.string().trim().min(1).max(200).optional(),
   description: z.string().trim().max(1000).nullable().optional(),
   subtype: z.string().trim().max(120).nullable().optional(),
