@@ -77,7 +77,7 @@ async function trialBalance(userId:string,query:ReportQuery){
        AND ($5::boolean=false OR COALESCE(je.source_type,'') <> 'intercompany_transaction')
      GROUP BY la.id,la.code,la.name,la.account_type
      HAVING COALESCE(sum(jl.debit_cents),0)<>0 OR COALESCE(sum(jl.credit_cents),0)<>0
-     ORDER BY la.code,la.name`,
+     ORDER BY la.code::numeric,la.code,la.name`,
     [userId,query.businessUnitId??null,query.legalEntityId??null,asOf,eliminate]
   );
   const data=result.rows.map(r=>({accountId:r.account_id,code:r.code,name:r.name,accountType:r.account_type,debitCents:Number(r.debits),creditCents:Number(r.credits),netDebitCents:Number(r.debits)-Number(r.credits)}));
@@ -107,7 +107,7 @@ async function profitLoss(userId:string,query:ReportQuery){
        AND ($8::boolean=false OR COALESCE(je.source_type,'') <> 'intercompany_transaction')
        AND (je.entry_date BETWEEN $4 AND $5 OR ($6::date IS NOT NULL AND je.entry_date BETWEEN $6 AND $7))
      GROUP BY la.id,la.code,la.name,la.account_type
-     ORDER BY CASE la.account_type WHEN 'revenue' THEN 0 ELSE 1 END,la.code`,
+     ORDER BY CASE la.account_type WHEN 'revenue' THEN 0 ELSE 1 END,la.code::numeric,la.code`,
     [userId,query.businessUnitId??null,query.legalEntityId??null,from,to,query.compareFrom??null,query.compareTo??null,eliminate]
   );
   const data=result.rows.map(r=>({accountId:r.account_id,code:r.code,name:r.name,accountType:r.account_type,amountCents:Number(r.current_amount),compareAmountCents:query.compareFrom?Number(r.compare_amount):null}));
@@ -134,7 +134,7 @@ async function balanceSheet(userId:string,query:ReportQuery){
        AND la.account_type IN ('asset','liability','equity') AND ${journalScopePredicate()}
        AND ($5::boolean=false OR COALESCE(je.source_type,'') <> 'intercompany_transaction')
      GROUP BY la.id,la.code,la.name,la.account_type
-     ORDER BY CASE la.account_type WHEN 'asset' THEN 0 WHEN 'liability' THEN 1 ELSE 2 END,la.code`,
+     ORDER BY CASE la.account_type WHEN 'asset' THEN 0 WHEN 'liability' THEN 1 ELSE 2 END,la.code::numeric,la.code`,
     [userId,query.businessUnitId??null,query.legalEntityId??null,asOf,eliminate]
   );
   const earningsResult=await pool.query<{earnings:string}>(
@@ -240,7 +240,7 @@ export async function getBookkeepingDashboard(userId:string,query:DashboardQuery
      FROM ledger_accounts la JOIN journal_lines jl ON jl.account_id=la.id JOIN journal_entries je ON je.id=jl.journal_entry_id
      WHERE la.control_type='cash' AND je.status IN ('posted','reversed') AND je.entry_date<=$4 AND ${journalScopePredicate()}
        AND ($5::boolean=false OR COALESCE(je.source_type,'')<>'intercompany_transaction')
-     GROUP BY la.id,la.code,la.name ORDER BY la.code`,
+     GROUP BY la.id,la.code,la.name ORDER BY la.code::numeric,la.code`,
     [userId,query.businessUnitId??null,query.legalEntityId??null,asOf,eliminate]
   );
   const plQuery:ReportQuery={from,to:asOf,format:'json',limit:1000,offset:0};
