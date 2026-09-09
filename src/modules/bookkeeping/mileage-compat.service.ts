@@ -25,11 +25,11 @@ type LegacyMileageInput = {
 
 type LegacyMileagePatch = {
   businessUnitId: string;
-  date?: string;
-  vehicle?: string;
-  purpose?: string;
-  startOdometer?: number;
-  endOdometer?: number;
+  date?: string | undefined;
+  vehicle?: string | undefined;
+  purpose?: string | undefined;
+  startOdometer?: number | undefined;
+  endOdometer?: number | undefined;
 };
 
 type AnyRecord = Record<string, any>;
