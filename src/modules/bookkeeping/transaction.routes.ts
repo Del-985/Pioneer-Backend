@@ -3,6 +3,7 @@ import { requireRouteParam } from '../../lib/route-param.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { currentAccountingDate, generatedReversalEntryNumber } from './accounting-date.js';
 import { normalizeIdempotencyKey, runIdempotent } from './idempotency.service.js';
+import { listTransactionAttachments } from './transaction-attachments.service.js';
 import {
   createTransactionSchema,
   postTransactionSchema,
@@ -60,7 +61,9 @@ bookkeepingTransactionRouter.post('/', async (req, res) => {
 
 bookkeepingTransactionRouter.get('/:transactionId', async (req, res) => {
   const transactionId = requireRouteParam(req, 'transactionId');
-  res.json({ data: await getBookkeepingTransaction(req.auth!.userId, transactionId) });
+  const transaction = await getBookkeepingTransaction(req.auth!.userId, transactionId);
+  const attachments = await listTransactionAttachments(req.auth!.userId, transactionId);
+  res.json({ data: { ...transaction, attachments } });
 });
 
 bookkeepingTransactionRouter.patch('/:transactionId', async (req, res) => {
