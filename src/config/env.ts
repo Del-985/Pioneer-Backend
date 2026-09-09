@@ -56,7 +56,16 @@ if (!parsed.success) {
   process.exit(1);
 }
 
+const builtInCorsOrigins = [
+  'https://pioneeroutdoorservices.com',
+  'https://www.pioneeroutdoorservices.com',
+  'https://del-985.github.io',
+];
+
 export const env = {
   ...parsed.data,
-  corsOrigins: parsed.data.CORS_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean),
+  corsOrigins: Array.from(new Set([
+    ...parsed.data.CORS_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean),
+    ...builtInCorsOrigins,
+  ])),
 };
