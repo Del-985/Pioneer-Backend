@@ -31,6 +31,7 @@ import {
   listBusinessUnitFeatures,
   updateBusinessUnitFeatures,
 } from './business-unit-feature.service.js';
+import { getBusinessUnitWebsite } from './business-unit-site.service.js';
 
 export const adminBusinessUnitRouter = Router();
 
@@ -43,6 +44,11 @@ adminBusinessUnitRouter.post('/', requireAuth, async (req, res) => {
   const input = createBusinessUnitSchema.parse(req.body);
   const data = await createBusinessUnit(req.auth!.userId, input);
   res.status(201).json({ data });
+});
+
+adminBusinessUnitRouter.get('/:businessUnitId/site', requireAuth, async (req, res) => {
+  const businessUnitId = requireRouteParam(req, 'businessUnitId');
+  res.json({ data: await getBusinessUnitWebsite(req.auth!.userId, businessUnitId) });
 });
 
 adminBusinessUnitRouter.use('/:businessUnitId/contacts', adminContactRouter);
