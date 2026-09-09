@@ -19,7 +19,7 @@ function requireStorageConfig() {
     throw new HttpError(
       503,
       'OBJECT_STORAGE_NOT_CONFIGURED',
-      'Bookkeeping attachment object storage is not configured.'
+      'Object storage is not configured.'
     );
   }
 
