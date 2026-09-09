@@ -57,6 +57,13 @@ type OpeningBalanceRow = {
   updated_at: Date;
 };
 
+const ACCOUNT_COLUMNS = `
+  id, legal_entity_id, parent_account_id, code, name, description,
+  account_type, subtype, status, is_system, control_type,
+  allow_manual_entries, created_by_user_id, updated_by_user_id,
+  deactivated_at, created_at, updated_at
+`;
+
 function mapAccount(row: AccountRow) {
   return {
     id: row.id,
@@ -79,7 +86,7 @@ function mapAccount(row: AccountRow) {
   };
 }
 
-function mapOpeningBalance(row: OpeningBalanceRow | undefined) {
+function mapOpeningBalance(row?: OpeningBalanceRow) {
   if (!row) return null;
   return {
     id: row.id,
@@ -95,29 +102,9 @@ function mapOpeningBalance(row: OpeningBalanceRow | undefined) {
   };
 }
 
-const accountSelect = `
-  id,
-  legal_entity_id,
-  parent_account_id,
-  code,
-  name,
-  description,
-  account_type,
-  subtype,
-  status,
-  is_system,
-  control_type,
-  allow_manual_entries,
-  created_by_user_id,
-  updated_by_user_id,
-  deactivated_at,
-  created_at,
-  updated_at
-`;
-
-async function loadAccount(accountId: string, legalEntityId: string): Promise<AccountRow> {
+async function loadAccount(accountId: string, legalEntityId: string) {
   const result = await pool.query<AccountRow>(
-    `SELECT ${accountSelect}
+    `SELECT ${ACCOUNT_COLUMNS}
      FROM ledger_accounts
      WHERE id = $1 AND legal_entity_id = $2`,
     [accountId, legalEntityId]
@@ -129,22 +116,11 @@ async function loadAccount(accountId: string, legalEntityId: string): Promise<Ac
   return row;
 }
 
-async function loadOpeningBalance(
-  businessUnitId: string,
-  accountId: string
-): Promise<OpeningBalanceRow | undefined> {
+async function loadOpeningBalance(businessUnitId: string, accountId: string) {
   const result = await pool.query<OpeningBalanceRow>(
-    `SELECT
-       id,
-       business_unit_id,
-       account_id,
-       offset_account_id,
-       as_of_date::text,
-       amount_cents::text,
-       balance_side,
-       journal_entry_id,
-       created_at,
-       updated_at
+    `SELECT id, business_unit_id, account_id, offset_account_id,
+            as_of_date::text, amount_cents::text, balance_side,
+            journal_entry_id, created_at, updated_at
      FROM account_opening_balances
      WHERE business_unit_id = $1 AND account_id = $2`,
     [businessUnitId, accountId]
@@ -152,18 +128,18 @@ async function loadOpeningBalance(
   return result.rows[0];
 }
 
-async function assertValidParent(
+async function validateParent(
   legalEntityId: string,
   accountId: string | null,
   parentAccountId: string | null | undefined
 ) {
   if (!parentAccountId) return;
-  if (accountId && accountId === parentAccountId) {
+  if (accountId === parentAccountId) {
     throw new HttpError(400, 'INVALID_PARENT_ACCOUNT', 'An account cannot be its own parent.');
   }
 
-  const parent = await pool.query<{ id: string }>(
-    `SELECT id FROM ledger_accounts WHERE id = $1 AND legal_entity_id = $2`,
+  const parent = await pool.query(
+    `SELECT 1 FROM ledger_accounts WHERE id = $1 AND legal_entity_id = $2`,
     [parentAccountId, legalEntityId]
   );
   if (!parent.rows[0]) {
@@ -187,21 +163,15 @@ async function assertValidParent(
   }
 }
 
-async function assertSensitiveAccountPermission(
-  userId: string,
-  legalEntityId: string,
-  current: AccountRow | null,
-  input: CreateInput | UpdateInput
-) {
-  const sensitive =
-    current?.is_system === true ||
-    'isSystem' in input && input.isSystem !== undefined ||
-    'controlType' in input && input.controlType !== undefined ||
-    'allowManualEntries' in input && input.allowManualEntries !== undefined;
+function createNeedsAdjust(input: CreateInput) {
+  return input.isSystem || input.controlType != null || !input.allowManualEntries;
+}
 
-  if (sensitive) {
-    await assertBookkeepingLegalEntity(userId, legalEntityId, 'bookkeeping.adjust');
-  }
+function updateNeedsAdjust(current: AccountRow, input: UpdateInput) {
+  return current.is_system ||
+    input.isSystem !== undefined ||
+    input.controlType !== undefined ||
+    input.allowManualEntries !== undefined;
 }
 
 export async function listBookkeepingAccounts(
@@ -211,7 +181,7 @@ export async function listBookkeepingAccounts(
 ) {
   const context = await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.read');
   const result = await pool.query<AccountRow>(
-    `SELECT ${accountSelect}
+    `SELECT ${ACCOUNT_COLUMNS}
      FROM ledger_accounts
      WHERE legal_entity_id = $1
        AND ($2::text IS NULL OR account_type = $2)
@@ -228,7 +198,6 @@ export async function listBookkeepingAccounts(
       query.offset,
     ]
   );
-
   return {
     data: result.rows.map(mapAccount),
     meta: paginationMeta(query, result.rows.length),
@@ -248,7 +217,7 @@ export async function getBookkeepingAccount(
     'bookkeeping.read'
   );
   const account = await loadAccount(accountId, context.legalEntityId);
-  const [balanceResult, openingBalance] = await Promise.all([
+  const [balance, openingBalance] = await Promise.all([
     pool.query<{ balance_cents: string }>(
       `SELECT COALESCE(sum(jl.debit_cents - jl.credit_cents), 0)::text AS balance_cents
        FROM journal_lines jl
@@ -260,11 +229,10 @@ export async function getBookkeepingAccount(
     ),
     loadOpeningBalance(businessUnitId, accountId),
   ]);
-
   return {
     ...mapAccount(account),
     selectedBusinessUnitId: businessUnitId,
-    balanceCents: Number(balanceResult.rows[0]?.balance_cents ?? 0),
+    balanceCents: Number(balance.rows[0]?.balance_cents ?? 0),
     openingBalance: mapOpeningBalance(openingBalance),
   };
 }
@@ -276,25 +244,18 @@ export async function createBookkeepingAccount(
 ) {
   const context = await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.read');
   await assertBookkeepingLegalEntity(userId, context.legalEntityId, 'bookkeeping.write');
-  await assertSensitiveAccountPermission(userId, context.legalEntityId, null, input);
-  await assertValidParent(context.legalEntityId, null, input.parentAccountId);
+  if (createNeedsAdjust(input)) {
+    await assertBookkeepingLegalEntity(userId, context.legalEntityId, 'bookkeeping.adjust');
+  }
+  await validateParent(context.legalEntityId, null, input.parentAccountId);
 
   const result = await pool.query<AccountRow>(
     `INSERT INTO ledger_accounts (
-       legal_entity_id,
-       parent_account_id,
-       code,
-       name,
-       description,
-       account_type,
-       subtype,
-       is_system,
-       control_type,
-       allow_manual_entries,
-       created_by_user_id,
-       updated_by_user_id
+       legal_entity_id, parent_account_id, code, name, description,
+       account_type, subtype, is_system, control_type, allow_manual_entries,
+       created_by_user_id, updated_by_user_id
      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11)
-     RETURNING ${accountSelect}`,
+     RETURNING ${ACCOUNT_COLUMNS}`,
     [
       context.legalEntityId,
       input.parentAccountId ?? null,
@@ -309,7 +270,6 @@ export async function createBookkeepingAccount(
       userId,
     ]
   );
-
   const row = result.rows[0];
   if (!row) {
     throw new HttpError(500, 'ACCOUNT_CREATE_FAILED', 'Account could not be created.');
@@ -324,7 +284,6 @@ export async function createBookkeepingAccount(
     metadata: {
       code: row.code,
       name: row.name,
-      accountType: row.account_type,
       isSystem: row.is_system,
       controlType: row.control_type,
     },
@@ -341,18 +300,20 @@ export async function updateBookkeepingAccount(
   const context = await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.read');
   await assertBookkeepingLegalEntity(userId, context.legalEntityId, 'bookkeeping.write');
   const current = await loadAccount(accountId, context.legalEntityId);
-  await assertSensitiveAccountPermission(userId, context.legalEntityId, current, input);
+  if (updateNeedsAdjust(current, input)) {
+    await assertBookkeepingLegalEntity(userId, context.legalEntityId, 'bookkeeping.adjust');
+  }
   if (input.parentAccountId !== undefined) {
-    await assertValidParent(context.legalEntityId, accountId, input.parentAccountId);
+    await validateParent(context.legalEntityId, accountId, input.parentAccountId);
   }
 
-  const nextIsSystem = input.isSystem ?? current.is_system;
-  const nextControlType = input.controlType === undefined ? current.control_type : input.controlType;
-  if (nextControlType && !nextIsSystem) {
+  const isSystem = input.isSystem ?? current.is_system;
+  const controlType = input.controlType === undefined ? current.control_type : input.controlType;
+  if (controlType && !isSystem) {
     throw new HttpError(400, 'CONTROL_ACCOUNT_REQUIRES_SYSTEM', 'Control accounts must be system accounts.');
   }
 
-  const nextStatus = input.status ?? current.status;
+  const status = input.status ?? current.status;
   const result = await pool.query<AccountRow>(
     `UPDATE ledger_accounts
      SET parent_account_id = $3,
@@ -371,7 +332,7 @@ export async function updateBookkeepingAccount(
            ELSE deactivated_at
          END
      WHERE id = $1 AND legal_entity_id = $2
-     RETURNING ${accountSelect}`,
+     RETURNING ${ACCOUNT_COLUMNS}`,
     [
       accountId,
       context.legalEntityId,
@@ -380,15 +341,15 @@ export async function updateBookkeepingAccount(
       input.name ?? current.name,
       input.description === undefined ? current.description : input.description,
       input.subtype === undefined ? current.subtype : input.subtype,
-      nextStatus,
-      nextIsSystem,
-      nextControlType,
+      status,
+      isSystem,
+      controlType,
       input.allowManualEntries ?? current.allow_manual_entries,
       userId,
     ]
   );
-
   const row = result.rows[0]!;
+
   await writeAuditEvent({
     actorUserId: userId,
     legalEntityId: context.legalEntityId,
@@ -398,7 +359,6 @@ export async function updateBookkeepingAccount(
     metadata: {
       before: {
         code: current.code,
-        name: current.name,
         status: current.status,
         isSystem: current.is_system,
         controlType: current.control_type,
@@ -406,7 +366,6 @@ export async function updateBookkeepingAccount(
       },
       after: {
         code: row.code,
-        name: row.name,
         status: row.status,
         isSystem: row.is_system,
         controlType: row.control_type,
@@ -425,19 +384,18 @@ export async function getAccountRegister(
 ) {
   await assertBookkeepingAccountScope(userId, businessUnitId, accountId, 'bookkeeping.read');
 
-  const beforeResult = await pool.query<{ balance_cents: string }>(
+  const prior = await pool.query<{ balance_cents: string }>(
     `SELECT COALESCE(sum(jl.debit_cents - jl.credit_cents), 0)::text AS balance_cents
      FROM journal_lines jl
      JOIN journal_entries je ON je.id = jl.journal_entry_id
      WHERE jl.account_id = $1
        AND je.business_unit_id = $2
        AND je.status IN ('posted', 'reversed')
-       AND ($3::date IS NOT NULL AND je.entry_date < $3::date)`,
+       AND $3::date IS NOT NULL
+       AND je.entry_date < $3::date`,
     [accountId, businessUnitId, query.from ?? null]
   );
-  const openingBalanceCents = query.from
-    ? Number(beforeResult.rows[0]?.balance_cents ?? 0)
-    : 0;
+  const openingBalanceCents = query.from ? Number(prior.rows[0]?.balance_cents ?? 0) : 0;
 
   const result = await pool.query<{
     journal_entry_id: string;
@@ -453,19 +411,9 @@ export async function getAccountRegister(
     running_cents: string;
   }>(
     `WITH activity AS (
-       SELECT
-         je.id AS journal_entry_id,
-         je.entry_number,
-         je.entry_date,
-         je.description,
-         je.status,
-         je.source_type,
-         je.source_id,
-         jl.debit_cents,
-         jl.credit_cents,
-         jl.memo,
-         jl.created_at,
-         jl.id AS line_id
+       SELECT je.id AS journal_entry_id, je.entry_number, je.entry_date,
+              je.description, je.status, je.source_type, je.source_id,
+              jl.debit_cents, jl.credit_cents, jl.memo, jl.created_at, jl.id AS line_id
        FROM journal_lines jl
        JOIN journal_entries je ON je.id = jl.journal_entry_id
        WHERE jl.account_id = $1
@@ -474,26 +422,15 @@ export async function getAccountRegister(
          AND ($3::date IS NULL OR je.entry_date >= $3::date)
          AND ($4::date IS NULL OR je.entry_date <= $4::date)
      ), running AS (
-       SELECT
-         *,
-         $5::bigint + sum(debit_cents - credit_cents) OVER (
-           ORDER BY entry_date, created_at, line_id
-           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-         ) AS running_cents
+       SELECT *, $5::bigint + sum(debit_cents - credit_cents) OVER (
+         ORDER BY entry_date, created_at, line_id
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+       ) AS running_cents
        FROM activity
      )
-     SELECT
-       journal_entry_id,
-       entry_number,
-       entry_date::text,
-       description,
-       status,
-       source_type,
-       source_id,
-       debit_cents::text,
-       credit_cents::text,
-       memo,
-       running_cents::text
+     SELECT journal_entry_id, entry_number, entry_date::text, description,
+            status, source_type, source_id, debit_cents::text, credit_cents::text,
+            memo, running_cents::text
      FROM running
      ORDER BY entry_date, created_at, line_id
      LIMIT $6 OFFSET $7`,
@@ -508,7 +445,7 @@ export async function getAccountRegister(
     ]
   );
 
-  const rows = result.rows.map((row) => ({
+  const data = result.rows.map((row) => ({
     journalEntryId: row.journal_entry_id,
     entryNumber: row.entry_number,
     entryDate: row.entry_date,
@@ -523,23 +460,23 @@ export async function getAccountRegister(
   }));
 
   return {
-    data: rows,
-    meta: paginationMeta(query, rows.length),
+    data,
+    meta: paginationMeta(query, data.length),
     accountId,
     businessUnitId,
     openingBalanceCents,
-    closingBalanceCents: rows.at(-1)?.runningBalanceCents ?? openingBalanceCents,
+    closingBalanceCents: data.at(-1)?.runningBalanceCents ?? openingBalanceCents,
   };
 }
 
-function generatedEntryNumber(prefix: string, accountCode: string) {
-  const safeCode = accountCode.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) || 'ACCOUNT';
-  return `${prefix}-${safeCode}-${randomUUID().slice(0, 8).toUpperCase()}`;
+function entryNumber(prefix: string, accountCode: string) {
+  const code = accountCode.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) || 'ACCOUNT';
+  return `${prefix}-${code}-${randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
-async function insertOpeningJournal(
+async function createPostedOpeningJournal(
   client: PoolClient,
-  input: {
+  options: {
     legalEntityId: string;
     businessUnitId: string;
     account: AccountRow;
@@ -552,46 +489,33 @@ async function insertOpeningJournal(
     userId: string;
   }
 ) {
-  const journalResult = await client.query<{ id: string }>(
+  const journal = await client.query<{ id: string }>(
     `INSERT INTO journal_entries (
-       legal_entity_id,
-       business_unit_id,
-       entry_number,
-       entry_date,
-       description,
-       source_type,
-       source_id,
-       created_by_user_id
+       legal_entity_id, business_unit_id, entry_number, entry_date,
+       description, source_type, source_id, created_by_user_id
      ) VALUES ($1,$2,$3,$4,$5,'opening_balance',$6,$7)
      RETURNING id`,
     [
-      input.legalEntityId,
-      input.businessUnitId,
-      generatedEntryNumber('OPEN', input.account.code),
-      input.asOfDate,
-      `Opening balance: ${input.account.code} ${input.account.name}`,
-      input.openingBalanceId,
-      input.userId,
+      options.legalEntityId,
+      options.businessUnitId,
+      entryNumber('OPEN', options.account.code),
+      options.asOfDate,
+      `Opening balance: ${options.account.code} ${options.account.name}`,
+      options.openingBalanceId,
+      options.userId,
     ]
   );
-  const journalId = journalResult.rows[0]?.id;
+  const journalId = journal.rows[0]?.id;
   if (!journalId) {
     throw new HttpError(500, 'OPENING_BALANCE_JOURNAL_FAILED', 'Opening balance journal could not be created.');
   }
 
-  const debitAccountId = input.balanceSide === 'debit' ? input.account.id : input.offsetAccount.id;
-  const creditAccountId = input.balanceSide === 'credit' ? input.account.id : input.offsetAccount.id;
+  const debitAccount = options.balanceSide === 'debit' ? options.account.id : options.offsetAccount.id;
+  const creditAccount = options.balanceSide === 'credit' ? options.account.id : options.offsetAccount.id;
   await client.query(
     `INSERT INTO journal_lines (journal_entry_id, account_id, debit_cents, credit_cents, memo)
-     VALUES ($1,$2,$4,0,$6), ($1,$3,0,$4,$6)`,
-    [
-      journalId,
-      debitAccountId,
-      creditAccountId,
-      input.amountCents,
-      input.balanceSide,
-      input.memo,
-    ]
+     VALUES ($1,$2,$4,0,$5), ($1,$3,0,$4,$5)`,
+    [journalId, debitAccount, creditAccount, options.amountCents, options.memo]
   );
   await client.query(`UPDATE journal_entries SET status = 'posted' WHERE id = $1`, [journalId]);
   return journalId;
@@ -600,45 +524,40 @@ async function insertOpeningJournal(
 async function reverseOpeningJournal(
   client: PoolClient,
   originalJournalId: string,
-  legalEntityId: string,
-  businessUnitId: string,
-  accountCode: string,
-  asOfDate: string,
-  openingBalanceId: string,
-  userId: string
+  options: {
+    legalEntityId: string;
+    businessUnitId: string;
+    accountCode: string;
+    asOfDate: string;
+    openingBalanceId: string;
+    userId: string;
+  }
 ) {
-  const original = await client.query<{
-    status: string;
-    description: string;
-  }>(`SELECT status, description FROM journal_entries WHERE id = $1 FOR UPDATE`, [originalJournalId]);
+  const original = await client.query<{ status: string; description: string }>(
+    `SELECT status, description FROM journal_entries WHERE id = $1 FOR UPDATE`,
+    [originalJournalId]
+  );
   const row = original.rows[0];
   if (!row || row.status !== 'posted') return;
 
-  const reversalResult = await client.query<{ id: string }>(
+  const reversal = await client.query<{ id: string }>(
     `INSERT INTO journal_entries (
-       legal_entity_id,
-       business_unit_id,
-       entry_number,
-       entry_date,
-       description,
-       source_type,
-       source_id,
-       reversed_entry_id,
-       created_by_user_id
+       legal_entity_id, business_unit_id, entry_number, entry_date,
+       description, source_type, source_id, reversed_entry_id, created_by_user_id
      ) VALUES ($1,$2,$3,$4,$5,'opening_balance_reversal',$6,$7,$8)
      RETURNING id`,
     [
-      legalEntityId,
-      businessUnitId,
-      generatedEntryNumber('OPEN-REV', accountCode),
-      asOfDate,
+      options.legalEntityId,
+      options.businessUnitId,
+      entryNumber('OPEN-REV', options.accountCode),
+      options.asOfDate,
       `Reversal of ${row.description}`,
-      openingBalanceId,
+      options.openingBalanceId,
       originalJournalId,
-      userId,
+      options.userId,
     ]
   );
-  const reversalId = reversalResult.rows[0]?.id;
+  const reversalId = reversal.rows[0]?.id;
   if (!reversalId) {
     throw new HttpError(500, 'OPENING_BALANCE_REVERSAL_FAILED', 'Opening balance reversal could not be created.');
   }
@@ -677,50 +596,40 @@ export async function setAccountOpeningBalance(
   }
 
   const client = await pool.connect();
-  let openingBalanceId = randomUUID();
+  let openingBalanceId: string = randomUUID();
   let previous: OpeningBalanceRow | undefined;
   let journalEntryId: string | null = null;
   try {
     await client.query('BEGIN');
-    const existingResult = await client.query<OpeningBalanceRow>(
-      `SELECT
-         id,
-         business_unit_id,
-         account_id,
-         offset_account_id,
-         as_of_date::text,
-         amount_cents::text,
-         balance_side,
-         journal_entry_id,
-         created_at,
-         updated_at
+    const existing = await client.query<OpeningBalanceRow>(
+      `SELECT id, business_unit_id, account_id, offset_account_id,
+              as_of_date::text, amount_cents::text, balance_side,
+              journal_entry_id, created_at, updated_at
        FROM account_opening_balances
        WHERE business_unit_id = $1 AND account_id = $2
        FOR UPDATE`,
       [businessUnitId, accountId]
     );
-    previous = existingResult.rows[0];
+    previous = existing.rows[0];
+
     if (previous) {
       openingBalanceId = previous.id;
-      await reverseOpeningJournal(
-        client,
-        previous.journal_entry_id,
-        context.legalEntityId,
+      await reverseOpeningJournal(client, previous.journal_entry_id, {
+        legalEntityId: context.legalEntityId,
         businessUnitId,
-        account.code,
-        input.asOfDate,
+        accountCode: account.code,
+        asOfDate: input.asOfDate,
         openingBalanceId,
-        userId
-      );
+        userId,
+      });
     }
 
     if (input.amountCents === 0) {
       if (previous) {
         await client.query(`DELETE FROM account_opening_balances WHERE id = $1`, [openingBalanceId]);
       }
-      await client.query('COMMIT');
     } else {
-      journalEntryId = await insertOpeningJournal(client, {
+      journalEntryId = await createPostedOpeningJournal(client, {
         legalEntityId: context.legalEntityId,
         businessUnitId,
         account,
@@ -756,17 +665,9 @@ export async function setAccountOpeningBalance(
       } else {
         await client.query(
           `INSERT INTO account_opening_balances (
-             id,
-             legal_entity_id,
-             business_unit_id,
-             account_id,
-             offset_account_id,
-             as_of_date,
-             amount_cents,
-             balance_side,
-             journal_entry_id,
-             created_by_user_id,
-             updated_by_user_id
+             id, legal_entity_id, business_unit_id, account_id, offset_account_id,
+             as_of_date, amount_cents, balance_side, journal_entry_id,
+             created_by_user_id, updated_by_user_id
            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)`,
           [
             openingBalanceId,
@@ -782,8 +683,8 @@ export async function setAccountOpeningBalance(
           ]
         );
       }
-      await client.query('COMMIT');
     }
+    await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -805,8 +706,8 @@ export async function setAccountOpeningBalance(
     resourceId: openingBalanceId,
     metadata: {
       accountId,
-      before: previous ? mapOpeningBalance(previous) : null,
-      after: current ? mapOpeningBalance(current) : null,
+      before: mapOpeningBalance(previous),
+      after: mapOpeningBalance(current),
       journalEntryId,
     },
   });
