@@ -57,6 +57,8 @@ if (!parsed.success) {
 }
 
 const builtInCorsOrigins = [
+  'https://pioneerlegacyworks.com',
+  'https://www.pioneerlegacyworks.com',
   'https://pioneeroutdoorservices.com',
   'https://www.pioneeroutdoorservices.com',
   'https://del-985.github.io',
