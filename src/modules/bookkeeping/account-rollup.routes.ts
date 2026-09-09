@@ -42,7 +42,11 @@ function sendProfitLossCsv(res: Response, report: Record<string, any>) {
 bookkeepingAccountRollupRouter.get('/reports/profit-loss', async (req, res) => {
   const query = reportQuerySchema.parse(req.query);
   const raw = await getBookkeepingReport(req.auth!.userId, 'profit-loss', { ...query, format: 'json' });
-  const report = await rollupProfitLossReport(req.auth!.userId, query, raw as Record<string, any>);
+  const scopeQuery = {
+    ...(query.businessUnitId ? { businessUnitId: query.businessUnitId } : {}),
+    ...(query.legalEntityId ? { legalEntityId: query.legalEntityId } : {}),
+  };
+  const report = await rollupProfitLossReport(req.auth!.userId, scopeQuery, raw as Record<string, any>);
   if (query.format === 'csv') {
     sendProfitLossCsv(res, report);
     return;
@@ -54,6 +58,12 @@ bookkeepingAccountRollupRouter.get('/accounts/:accountId/register', async (req, 
   const businessUnitId = businessUnitIdSchema.parse(req.query.businessUnitId);
   const accountId = requireRouteParam(req, 'accountId');
   const { businessUnitId: _businessUnitId, ...rest } = req.query;
-  const query = accountRegisterQuerySchema.parse(rest);
+  const parsed = accountRegisterQuerySchema.parse(rest);
+  const query = {
+    limit: parsed.limit,
+    offset: parsed.offset,
+    ...(parsed.from ? { from: parsed.from } : {}),
+    ...(parsed.to ? { to: parsed.to } : {}),
+  };
   res.json(await getRolledAccountRegister(req.auth!.userId, businessUnitId, accountId, query));
 });
