@@ -36,11 +36,14 @@ export const createBookkeepingAccountSchema = z.object({
   isSystem: z.boolean().default(false),
   controlType: accountControlTypeSchema.nullable().optional(),
   allowManualEntries: z.boolean().default(true),
-}).refine((value) => value.controlType == null || value.isSystem, {
+}).strict().refine((value) => value.controlType == null || value.isSystem, {
   message: 'Control accounts must be system accounts.',
   path: ['isSystem'],
 });
 
+// Account type is intentionally immutable after creation. Reclassification changes historical
+// accounting meaning and requires a controlled migration rather than an ordinary PATCH.
+// Normal balance is derived from account type and is therefore not persisted independently.
 export const updateBookkeepingAccountSchema = z.object({
   parentAccountId: z.string().uuid().nullable().optional(),
   code: accountCodeSchema.optional(),
@@ -51,7 +54,7 @@ export const updateBookkeepingAccountSchema = z.object({
   isSystem: z.boolean().optional(),
   controlType: accountControlTypeSchema.nullable().optional(),
   allowManualEntries: z.boolean().optional(),
-}).refine((value) => Object.keys(value).length > 0, {
+}).strict().refine((value) => Object.keys(value).length > 0, {
   message: 'At least one field is required.',
 });
 
