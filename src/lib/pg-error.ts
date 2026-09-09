@@ -6,6 +6,7 @@ type PgErrorLike = {
   detail?: string;
   table?: string;
   column?: string;
+  message?: string;
 };
 
 function isPgError(error: unknown): error is PgErrorLike {
@@ -30,6 +31,13 @@ export function mapDatabaseError(error: unknown): HttpError | null {
     case '23502':
     case '22P02':
       return new HttpError(400, 'DATABASE_VALIDATION_ERROR', 'The request violates a data constraint.', details);
+    case 'P0001':
+      return new HttpError(
+        409,
+        'DATABASE_BUSINESS_RULE',
+        error.message ?? 'The operation violates a protected business rule.',
+        details
+      );
     case '40001':
     case '40P01':
       return new HttpError(409, 'TRANSACTION_CONFLICT', 'The operation conflicted with another transaction. Retry the request.');
