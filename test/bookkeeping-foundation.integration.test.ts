@@ -111,7 +111,7 @@ test('accounting periods reject overlap and block closed-period posting', async 
   assert.equal(posted.rows[0]?.status, 'posted');
 });
 
-test('control accounts are unique and can reject manual journal use', async () => {
+test('multiple cash accounts are allowed while other protected controls stay unique', async () => {
   await pool.query(
     `INSERT INTO ledger_accounts (
        id, legal_entity_id, code, name, account_type,
@@ -120,11 +120,25 @@ test('control accounts are unique and can reject manual journal use', async () =
     [ids.control, ids.entity]
   );
 
+  await pool.query(
+    `INSERT INTO ledger_accounts (
+       legal_entity_id, code, name, account_type, is_system, control_type, allow_manual_entries
+     ) VALUES ($1,'1020','Second Cash Account','asset',true,'cash',true)`,
+    [ids.entity]
+  );
+
+  await pool.query(
+    `INSERT INTO ledger_accounts (
+       legal_entity_id, code, name, account_type, is_system, control_type
+     ) VALUES ($1,'3000','Retained Earnings','equity',true,'retained_earnings')`,
+    [ids.entity]
+  );
+
   await assert.rejects(
     pool.query(
       `INSERT INTO ledger_accounts (
          legal_entity_id, code, name, account_type, is_system, control_type
-       ) VALUES ($1,'1020','Duplicate Cash Control','asset',true,'cash')`,
+       ) VALUES ($1,'3010','Duplicate Retained Earnings','equity',true,'retained_earnings')`,
       [ids.entity]
     ),
     /duplicate key value/
