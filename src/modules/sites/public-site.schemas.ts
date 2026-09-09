@@ -24,6 +24,13 @@ const contactSubmissionSchema = z.object({
     .or(z.literal('')),
   sourcePath: z.string().trim().max(500).optional().or(z.literal('')),
   website: z.string().max(2000).optional().or(z.literal('')),
+  clientRequestId: z.string()
+    .trim()
+    .min(8)
+    .max(120)
+    .regex(/^[A-Za-z0-9._:-]+$/, 'Invalid client request id')
+    .optional()
+    .or(z.literal('')),
 }).refine(
   (value) => Boolean(value.email?.trim() || value.phone?.trim()),
   {
@@ -41,6 +48,7 @@ export type ContactSubmissionInput = {
   businessUnitSlug: string | null;
   sourcePath: string | null;
   website: string | null;
+  clientRequestId: string | null;
 };
 
 export function parseContactSubmission(value: unknown): ContactSubmissionInput {
@@ -55,5 +63,6 @@ export function parseContactSubmission(value: unknown): ContactSubmissionInput {
     businessUnitSlug: parsed.businessUnitSlug?.trim() || null,
     sourcePath: parsed.sourcePath?.trim() || null,
     website: parsed.website?.trim() || null,
+    clientRequestId: parsed.clientRequestId?.trim() || null,
   };
 }
