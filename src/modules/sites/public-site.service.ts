@@ -4,6 +4,10 @@ import type { ContactSubmissionInput } from './public-site.schemas.js';
 
 type SiteScope = 'platform' | 'legal_entity' | 'business_unit';
 
+const OUTDOOR_SERVICES_NOTIFICATION_EMAIL = 'del@pioneerlegacyworks.com';
+const OUTDOOR_SERVICES_SLUG = 'pos';
+const OUTDOOR_SERVICES_PUBLIC_ALIAS = 'pioneer-outdoor-services';
+
 type SiteRow = {
   id: string;
   key: string;
@@ -191,12 +195,16 @@ async function resolveRequestedBusinessUnit(
     return site.scope === 'business_unit' ? site.business_unit_id : null;
   }
 
+  const resolvedSlug = businessUnitSlug === OUTDOOR_SERVICES_PUBLIC_ALIAS
+    ? OUTDOOR_SERVICES_SLUG
+    : businessUnitSlug;
+
   const result = await pool.query<ResolvedBusinessUnitRow>(
     `SELECT bu.id, bu.legal_entity_id, COALESCE(bp.is_published, false) AS is_published
      FROM business_units bu
      LEFT JOIN business_unit_public_profiles bp ON bp.business_unit_id = bu.id
      WHERE bu.slug = $1 AND bu.status = 'active'`,
-    [businessUnitSlug]
+    [resolvedSlug]
   );
 
   const businessUnit = result.rows[0];
@@ -226,13 +234,16 @@ async function notificationTarget(
 
   const result = await pool.query<NotificationTarget>(
     `SELECT
-       COALESCE(unit_profile.contact_email, $2::text) AS recipient,
+       CASE
+         WHEN bu.slug = $3 THEN $4::text
+         ELSE COALESCE(unit_profile.contact_email, $2::text)
+       END AS recipient,
        bu.legal_entity_id
      FROM business_units bu
      LEFT JOIN sites unit_site ON unit_site.business_unit_id = bu.id AND unit_site.status = 'active'
      LEFT JOIN site_profiles unit_profile ON unit_profile.site_id = unit_site.id
      WHERE bu.id = $1`,
-    [businessUnitId, site.contact_email]
+    [businessUnitId, site.contact_email, OUTDOOR_SERVICES_SLUG, OUTDOOR_SERVICES_NOTIFICATION_EMAIL]
   );
 
   return result.rows[0] ?? { recipient: site.contact_email, legal_entity_id: null };
