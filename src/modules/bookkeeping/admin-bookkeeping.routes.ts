@@ -12,11 +12,13 @@ import {
 import {
   createBookkeepingAccount,
   getAccountRegister,
-  getBookkeepingAccount,
-  listBookkeepingAccounts,
   setAccountOpeningBalance,
   updateBookkeepingAccount,
 } from './accounts.service.js';
+import {
+  getBookkeepingAccountForBusinessUnit,
+  listBookkeepingAccountsForBusinessUnit,
+} from './account-response.service.js';
 import {
   accountingEventListQuerySchema,
   createJournalSchema,
@@ -40,7 +42,7 @@ export const adminBookkeepingRouter = Router({ mergeParams: true });
 
 adminBookkeepingRouter.get('/accounts', requireAuth, async (req, res) => {
   const businessUnitId = requireRouteParam(req, 'businessUnitId');
-  res.json(await listBookkeepingAccounts(
+  res.json(await listBookkeepingAccountsForBusinessUnit(
     req.auth!.userId,
     businessUnitId,
     bookkeepingAccountListQuerySchema.parse(req.query)
@@ -61,7 +63,7 @@ adminBookkeepingRouter.get('/accounts/:accountId/register', requireAuth, async (
 adminBookkeepingRouter.get('/accounts/:accountId', requireAuth, async (req, res) => {
   const businessUnitId = requireRouteParam(req, 'businessUnitId');
   const accountId = requireRouteParam(req, 'accountId');
-  res.json({ data: await getBookkeepingAccount(req.auth!.userId, businessUnitId, accountId) });
+  res.json({ data: await getBookkeepingAccountForBusinessUnit(req.auth!.userId, businessUnitId, accountId) });
 });
 
 adminBookkeepingRouter.post('/accounts', requireAuth, async (req, res) => {
