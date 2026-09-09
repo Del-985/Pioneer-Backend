@@ -10,7 +10,7 @@ Pioneer Backend is the shared modular-monolith API for Pioneer Legacy Works. Rou
 - Ledger accounts are Legal Entity scoped.
 - Journal entries identify both Legal Entity and Business Unit; PostgreSQL verifies the relationship.
 - Authorization is enforced by the backend for every protected request.
-- A client-supplied Business Unit or Legal Entity identifier is context, not proof of access.
+- Client-supplied Business Unit and Legal Entity identifiers are context, never proof of access.
 - `All Businesses` is read-only consolidated reporting, not a mutation scope.
 - Money is represented as integer cents.
 
@@ -26,7 +26,7 @@ Pioneer Backend is the shared modular-monolith API for Pioneer Legacy Works. Rou
 - `POST /api/auth/password/reset/request`
 - `POST /api/auth/password/reset`
 
-Sessions are opaque, revocable, server-side records. Password reset tokens are stored only as hashes. Login and reset limits are PostgreSQL-backed so limits remain consistent across backend instances.
+Sessions are opaque, revocable, server-side records. Password reset tokens are stored only as hashes. Login and reset rate limits are PostgreSQL-backed.
 
 ## Public site API
 
@@ -35,7 +35,7 @@ Sessions are opaque, revocable, server-side records. Password reset tokens are s
 - `GET /api/public/sites/:siteKey/business-units`
 - `POST /api/public/sites/:siteKey/contact`
 
-Public Business Unit directories respect the site's organizational scope. Contact submissions are stored centrally and, when a contact recipient is configured, enqueue an email notification without blocking the request on SMTP delivery.
+Public Business Unit directories respect site scope. Contact submissions are stored centrally and can enqueue provider-independent notification work.
 
 ## Shared application context
 
@@ -57,113 +57,97 @@ Returns Business Units the authenticated user may access. Applications should us
 - `/api/admin/notifications`
 - `/api/admin/integrations`
 
-### User security administration
-
-- `GET /api/admin/users/:userId/security/sessions`
-- `DELETE /api/admin/users/:userId/security/sessions/:sessionId`
-- `POST /api/admin/users/:userId/security/sessions/revoke-all`
-- `POST /api/admin/users/:userId/security/password-reset`
-
-These endpoints are scope-aware. Administrators can issue a reset workflow; they cannot retrieve an existing password.
-
-## Business Unit administration
-
-The following modules are nested below `/api/admin/business-units/:businessUnitId`:
-
-- `contacts`
-- `customers`
-- `files`
-- `forms`
-- `schedule`
-- `estimates`
-- `work-orders`
-- `invoices`
-- `payments`
-- `employees`
-- `vehicles`
-- `mileage`
-- `bookkeeping`
-- `reports`
-- `features`
-
-### Customers and addresses
-
-Customer CRUD uses the existing customer endpoints. Addresses are nested at:
-
-- `GET /customers/:customerId/addresses`
-- `POST /customers/:customerId/addresses`
-- `PATCH /customers/:customerId/addresses/:addressId`
-
-A customer may have a primary address by address type. Cross-Business-Unit attachment is rejected.
-
-### Files and forms
-
-Files store metadata only: ownership, object-storage key, content type, size, SHA-256 checksum, category, and metadata. Binary file bytes belong in object storage.
-
-Forms can reference a file and/or structured JSON schema and support versioned library entries.
-
-### Scheduling
-
-- list/create schedule entries
-- update status, time, assignment, customer, and metadata
-- customer relationships are Business Unit validated
-
-### Estimates
-
-Estimates contain line items. The backend calculates line totals, subtotal, tax, and total from submitted quantities and unit prices.
-
-### Work orders
-
-Work orders may link to a customer, estimate, schedule entry, service address, and employee. Every relationship must resolve inside the active Business Unit.
-
-### Invoices and payments
-
-Invoices contain line items and backend-calculated totals. Completed payments are summed from payment records to derive invoice paid/partial state; the API does not blindly increment a paid counter.
-
-A completed payment creates a pending `accounting_event`. Accounting can then post that event into the journal using selected debit/credit accounts.
-
-## Employees, fleet, and mileage
-
-Employees can optionally link to a global Pioneer user identity while remaining Business Unit records.
-
-Vehicles are Business Unit scoped. Mileage logs record starting/ending odometer readings and calculate miles in PostgreSQL. New logs cannot roll the odometer backward; accepted logs advance the vehicle's current odometer.
+Admin Business Unit routes also expose operational modules such as customers, files, forms, scheduling, estimates, work orders, invoices, payments, employees, fleet, mileage, and bookkeeping compatibility aliases.
 
 ## Bookkeeping
 
-Bookkeeping routes are under `/api/admin/business-units/:businessUnitId/bookkeeping`.
+The canonical Bookkeeping application API is `/api/bookkeeping`. The older `/api/admin/business-units/:businessUnitId/bookkeeping` routes remain available where needed for admin compatibility.
+
+Bookkeeping permissions are:
+
+- `bookkeeping.read`
+- `bookkeeping.write`
+- `bookkeeping.post`
+- `bookkeeping.adjust`
+- `bookkeeping.reconcile`
+- `bookkeeping.close`
+- `bookkeeping.audit.read`
+
+Business Unit context is resolved to its Legal Entity on the server. Cross-entity account use is rejected.
 
 ### Chart of accounts
 
-- `GET /accounts`
-- `POST /accounts`
-- `PATCH /accounts/:accountId`
+Canonical routes:
 
-Accounts belong to the Legal Entity. Creating or modifying the chart requires Legal Entity scope even when accessed through a Business Unit route.
+- `GET /api/bookkeeping/accounts?businessUnitId=...`
+- `GET /api/bookkeeping/accounts/:accountId?businessUnitId=...`
+- `POST /api/bookkeeping/accounts`
+- `PATCH /api/bookkeeping/accounts/:accountId`
+- `GET /api/bookkeeping/accounts/:accountId/register?businessUnitId=...`
+- `PUT /api/bookkeeping/accounts/:accountId/opening-balance`
+
+Accounts belong to the Legal Entity. Register activity and opening balances are Business Unit specific. Opening balances are balanced journal entries, not mutable account fields. System/control accounts can restrict manual use, and inactive accounts cannot be used for new accounting activity.
+
+### Accounting periods
+
+- `GET /api/bookkeeping/periods?businessUnitId=...`
+- `POST /api/bookkeeping/periods`
+- `POST /api/bookkeeping/periods/:periodId/close`
+- `POST /api/bookkeeping/periods/:periodId/reopen`
+
+Periods belong to a Legal Entity and can be `open`, `closed`, or `locked`. Overlap is rejected. Posting and draft financial edits in closed/locked periods are blocked by PostgreSQL. Reversals must use an open effective date.
+
+### Unified transactions
+
+- `GET /api/bookkeeping/transactions`
+- `GET /api/bookkeeping/transactions/:transactionId`
+- `POST /api/bookkeeping/transactions`
+- `PATCH /api/bookkeeping/transactions/:transactionId`
+- `POST /api/bookkeeping/transactions/:transactionId/post`
+- `POST /api/bookkeeping/transactions/:transactionId/void`
+- `POST /api/bookkeeping/transactions/:transactionId/reverse`
+
+The transaction layer normalizes four workflows over the existing ledger engine:
+
+- expense
+- income
+- transfer
+- manual journal
+
+Stable transaction IDs are type-prefixed (`expense:<uuid>`, `income:<uuid>`, `transfer:<uuid>`, `manual:<journal-uuid>`) so records from different source tables cannot be confused.
+
+Search supports Business Unit, Legal Entity, account, type, status, date range, amount range, text search, and pagination. Without a Business Unit filter, reads are still limited to Business Units for which the user has `bookkeeping.read`.
+
+Draft transactions can be edited or voided. Posted transactions cannot be destructively changed; they must be reversed. Reversal requires adjustment/posting authority and creates a new balanced journal using an open effective date.
+
+Expense, income, and transfer posting are atomic. Journal creation, lines, posting, and source-record linkage/status updates occur inside one database transaction. Manual posting delegates to the journal engine.
+
+See `docs/BOOKKEEPING_TRANSACTIONS.md` for the transaction payload and lifecycle contract.
 
 ### Journals
 
-- `GET /journals`
-- `POST /journals`
-- `GET /journals/:journalId`
-- `PATCH /journals/:journalId`
-- `POST /journals/:journalId/post`
-- `POST /journals/:journalId/reverse`
+- `GET /api/bookkeeping/journals?businessUnitId=...`
+- `POST /api/bookkeeping/journals`
+- `GET /api/bookkeeping/journals/:journalId?businessUnitId=...`
+- `PATCH /api/bookkeeping/journals/:journalId`
+- `POST /api/bookkeeping/journals/:journalId/post`
+- `POST /api/bookkeeping/journals/:journalId/reverse`
 
-Draft journal entries may be prepared with `bookkeeping.write`. Posting/reversing requires `bookkeeping.post`. PostgreSQL refuses posting unless there are at least two lines, debits equal credits, and the total is positive. Journal line accounts must belong to the same Legal Entity as the journal.
+Journal statuses include `draft`, `posted`, `reversed`, and `void`. PostgreSQL refuses posting unless there are at least two lines, debits equal credits, and the total is positive. Journal line accounts must belong to the journal Legal Entity.
 
 ### Accounting events
 
-- `GET /events`
-- `POST /events/:eventId/post`
+- `GET /api/bookkeeping/events?businessUnitId=...`
+- `POST /api/bookkeeping/events/:eventId/post`
 
-Operational modules can emit accounting events without deciding the chart-of-accounts mapping. Posting an event supplies the debit/credit accounts and creates a journal entry.
+Operational modules can emit accounting events without deciding chart-of-accounts mapping. Posting an event supplies debit/credit accounts and creates a journal entry.
 
-### Expenses and revenue
+### Expense and revenue compatibility endpoints
 
-- `/bookkeeping/expenses`
-- `/bookkeeping/revenue`
+- `/api/bookkeeping/expenses`
+- `/api/bookkeeping/revenue`
 
-Records begin as drafts. Posting requires account mapping and creates/links a balanced journal entry.
+These remain available for focused workflows. Their posting actions use the same atomic posting services as the unified transaction API.
 
 ## Reporting
 
@@ -176,7 +160,7 @@ Consolidated read-only reporting:
 
 - `GET /api/admin/reporting/consolidated`
 
-Consolidated reporting only aggregates Business Units visible to the authenticated user and may be filtered to one Legal Entity.
+Consolidated reporting aggregates only Business Units visible to the authenticated user.
 
 ## Intercompany
 
@@ -185,22 +169,18 @@ Consolidated reporting only aggregates Business Units visible to the authenticat
 - `PATCH /api/admin/intercompany/:intercompanyId`
 - `POST /api/admin/intercompany/:intercompanyId/post`
 
-An intercompany record must cross Legal Entity boundaries. Posting requires authorization on both sides and atomically creates two balanced journal entries in one database transaction.
+Intercompany records cross Legal Entity boundaries. Posting requires authorization on both sides and atomically creates both journals.
 
 ## Notifications
 
 - `GET /api/admin/notifications`
 - `POST /api/admin/notifications/:notificationId/action`
 
-The durable outbox supports email/webhook channel records. Email delivery is processed separately from request handling:
+The durable outbox supports email/webhook work. Email delivery is processed separately with:
 
 ```text
 npm run process-notifications
 ```
-
-SMTP delivery retries failures with backoff and uses row locking so multiple workers can run safely. Password reset tokens are removed from outbox payloads after successful delivery.
-
-Required SMTP configuration is optional until a worker is run: `SMTP_HOST`, `SMTP_FROM`, optional authentication, and `PASSWORD_RESET_URL` for reset emails.
 
 ## Integrations
 
@@ -208,7 +188,7 @@ Required SMTP configuration is optional until a worker is run: `SMTP_HOST`, `SMT
 - `POST /api/admin/integrations`
 - `PATCH /api/admin/integrations/:integrationId`
 
-Integrations may be platform, Legal Entity, or Business Unit scoped. API responses never expose the stored `secret_reference`; they only indicate whether one exists. Actual secrets should remain in the deployment secret store and be resolved by provider adapters.
+Integrations may be platform, Legal Entity, or Business Unit scoped. API responses do not expose stored secret references.
 
 ## Maintenance jobs
 
@@ -217,8 +197,6 @@ npm run migrate
 npm run cleanup-sessions
 npm run process-notifications
 ```
-
-`cleanup-sessions` removes old expired/revoked sessions, expired/consumed password-reset tokens, and stale rate-limit counters.
 
 ## CI
 
@@ -229,4 +207,4 @@ CI provisions PostgreSQL 16 and runs:
 3. automated tests
 4. production build
 
-Integration tests cover scoped authorization and accounting database invariants in addition to unit tests for password hashing and shared HTTP/database utilities.
+Integration tests cover authorization, accounting database invariants, accounting periods/control accounts, and the unified transaction workflow.
