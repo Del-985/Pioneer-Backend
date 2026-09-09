@@ -5,6 +5,7 @@ import { assertBusinessUnitPermission } from '../access/authorization.service.js
 import { currentAccountingDate, generatedReversalEntryNumber } from './accounting-date.js';
 import { normalizeIdempotencyKey, runIdempotent } from './idempotency.service.js';
 import { enrichTransactionIncomeCustomer } from './income-customer.service.js';
+import { presentSpecialTransaction } from './special-transaction.presentation.js';
 import { listTransactionAttachments } from './transaction-attachments.service.js';
 import { createTransactionSchema, postTransactionSchema, reverseTransactionSchema, transactionListQuerySchema, voidTransactionSchema } from './transaction.schemas.js';
 import { createBookkeepingTransaction, getBookkeepingTransaction, listBookkeepingTransactions, postBookkeepingTransaction, reverseBookkeepingTransaction, updateBookkeepingTransaction, voidBookkeepingTransaction } from './transaction.service.js';
@@ -27,7 +28,9 @@ function reversalInputFromRequest(body: unknown, transaction: { businessUnitId: 
   });
 }
 
-async function presentTransaction(value: unknown) { return enrichTransactionIncomeCustomer(value); }
+async function presentTransaction(value: unknown) {
+  return presentSpecialTransaction(await enrichTransactionIncomeCustomer(value) as any);
+}
 
 bookkeepingTransactionRouter.get('/', async (req, res) => {
   res.json(await listBookkeepingTransactions(req.auth!.userId, transactionListQuerySchema.parse(req.query)));
