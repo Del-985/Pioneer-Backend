@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth.js';
 import { getBookkeepingAccount } from './accounts.service.js';
 import { normalizeIdempotencyKey, runIdempotent } from './idempotency.service.js';
+import { presentSpecialTransaction } from './special-transaction.presentation.js';
 import { transactionListQuerySchema } from './transaction.schemas.js';
 import { createBookkeepingTransaction, listBookkeepingTransactions } from './transaction.service.js';
 
@@ -54,20 +55,21 @@ const splitIncomeSchema = z.object({
 
 type ListedTransaction = Awaited<ReturnType<typeof listBookkeepingTransactions>>['data'][number];
 type ListQuery = Parameters<typeof listBookkeepingTransactions>[1];
-
-type PresentedTransaction = ListedTransaction & { type: string; splitIncome?: boolean };
+type PresentedTransaction = ListedTransaction & {
+  type: string;
+  splitIncome?: boolean;
+  splitExpense?: boolean;
+  ownerDraw?: boolean;
+  loanReceived?: boolean;
+  loanPayment?: boolean;
+};
 
 function compareText(left: unknown, right: unknown) {
   return String(left ?? '').localeCompare(String(right ?? ''), undefined, { sensitivity: 'base' });
 }
 
-function isSplitIncome(transaction: ListedTransaction) {
-  return transaction.type === 'manual' && String(transaction.entryNumber ?? '').startsWith('INCSPLIT-');
-}
-
 function presentTransaction(transaction: ListedTransaction): PresentedTransaction {
-  if (isSplitIncome(transaction)) return { ...transaction, type: 'income', splitIncome: true };
-  return transaction;
+  return presentSpecialTransaction(transaction as PresentedTransaction);
 }
 
 function compareTransactions(left: PresentedTransaction, right: PresentedTransaction, sortBy: z.infer<typeof sortQuerySchema>['sortBy']) {
@@ -151,10 +153,7 @@ bookkeepingTransactionListRouter.post('/split-income', async (req, res) => {
     key: normalizeIdempotencyKey(req.get('Idempotency-Key')),
     payload: input,
     successStatus: 201,
-    execute: async () => {
-      const created = await createBookkeepingTransaction(req.auth!.userId, transactionInput);
-      return { ...created, type: 'income', splitIncome: true };
-    },
+    execute: async () => presentTransaction(await createBookkeepingTransaction(req.auth!.userId, transactionInput)),
   });
   res.setHeader('Idempotency-Replayed', String(result.replayed));
   res.status(result.status).json({ data: result.value });
@@ -163,8 +162,9 @@ bookkeepingTransactionListRouter.post('/split-income', async (req, res) => {
 bookkeepingTransactionListRouter.get('/', async (req, res) => {
   const rawType = typeof req.query.type === 'string' ? req.query.type : undefined;
   const requestedType = rawType === 'journal' ? 'manual' : rawType;
+  const presentedFilterTypes = new Set(['income', 'expense', 'manual', 'owner_draw', 'loan_received', 'loan_payment']);
   const parseInput = { ...req.query } as Record<string, unknown>;
-  if (requestedType === 'income' || requestedType === 'manual') delete parseInput.type;
+  if (requestedType && presentedFilterTypes.has(requestedType)) delete parseInput.type;
   else if (requestedType) parseInput.type = requestedType;
 
   const query = transactionListQuerySchema.parse(parseInput);
@@ -172,8 +172,9 @@ bookkeepingTransactionListRouter.get('/', async (req, res) => {
   const allRaw = await loadAllMatchingTransactions(req.auth!.userId, query);
   let all = allRaw.map(presentTransaction);
 
-  if (requestedType === 'income') all = all.filter((transaction) => transaction.type === 'income');
-  else if (requestedType === 'manual') all = all.filter((transaction) => transaction.type === 'manual');
+  if (requestedType && presentedFilterTypes.has(requestedType)) {
+    all = all.filter((transaction) => transaction.type === requestedType);
+  }
 
   const direction = sort.sortDirection === 'asc' ? 1 : -1;
   all.sort((left, right) => {
