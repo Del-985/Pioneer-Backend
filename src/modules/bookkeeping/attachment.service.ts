@@ -9,7 +9,11 @@ import {
   attachmentListQuerySchema,
   createAttachmentUploadIntentSchema,
 } from './completion.schemas.js';
-import { createDownloadUrl, createUploadUrl } from './object-storage.service.js';
+import {
+  createDownloadUrl,
+  createUploadUrl,
+  isObjectStorageConfigured,
+} from './object-storage.service.js';
 
 type ListQuery = z.infer<typeof attachmentListQuerySchema>;
 type CreateInput = z.infer<typeof createAttachmentUploadIntentSchema>;
@@ -24,6 +28,8 @@ type AttachmentRow = {
   content_type: string | null;
   byte_size: string | null;
   checksum_sha256: string | null;
+  file_status: 'active' | 'archived';
+  file_metadata: Record<string, unknown>;
   target_type: string;
   target_id: string;
   category: string;
@@ -33,6 +39,13 @@ type AttachmentRow = {
   archived_at: Date | null;
   created_at: Date;
   updated_at: Date;
+};
+
+type StoredAttachmentContentRow = {
+  content: Buffer;
+  file_name: string;
+  content_type: string | null;
+  byte_size: string | null;
 };
 
 function mapAttachment(row: AttachmentRow) {
@@ -51,6 +64,8 @@ function mapAttachment(row: AttachmentRow) {
     category: row.category,
     description: row.description,
     status: row.status,
+    storageProvider: row.file_metadata?.storageProvider ?? 'object_storage',
+    uploadStatus: row.file_metadata?.uploadStatus ?? null,
     createdByUserId: row.created_by_user_id,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
@@ -61,10 +76,21 @@ function mapAttachment(row: AttachmentRow) {
 const selectAttachment = `
   SELECT ba.id,ba.legal_entity_id,ba.business_unit_id,ba.file_id,
          f.storage_key,f.file_name,f.content_type,f.byte_size::text,f.checksum_sha256,
+         f.status AS file_status,f.metadata AS file_metadata,
          ba.target_type,ba.target_id,ba.category,ba.description,ba.status,
          ba.created_by_user_id,ba.archived_at,ba.created_at,ba.updated_at
   FROM bookkeeping_attachments ba
   JOIN files f ON f.id=ba.file_id`;
+
+async function loadAttachmentRow(businessUnitId: string, attachmentId: string) {
+  const result = await pool.query<AttachmentRow>(
+    `${selectAttachment} WHERE ba.id=$1 AND ba.business_unit_id=$2`,
+    [attachmentId, businessUnitId]
+  );
+  const row = result.rows[0];
+  if (!row) throw new HttpError(404, 'ATTACHMENT_NOT_FOUND', 'Bookkeeping attachment not found.');
+  return row;
+}
 
 export async function listBookkeepingAttachments(userId: string, query: ListQuery) {
   await assertBookkeepingBusinessUnit(userId, query.businessUnitId, 'bookkeeping.read');
@@ -83,13 +109,7 @@ export async function listBookkeepingAttachments(userId: string, query: ListQuer
 
 export async function getBookkeepingAttachment(userId: string, businessUnitId: string, attachmentId: string) {
   await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.read');
-  const result = await pool.query<AttachmentRow>(
-    `${selectAttachment} WHERE ba.id=$1 AND ba.business_unit_id=$2`,
-    [attachmentId, businessUnitId]
-  );
-  const row = result.rows[0];
-  if (!row) throw new HttpError(404, 'ATTACHMENT_NOT_FOUND', 'Bookkeeping attachment not found.');
-  return mapAttachment(row);
+  return mapAttachment(await loadAttachmentRow(businessUnitId, attachmentId));
 }
 
 function safeFileName(name: string) {
@@ -98,12 +118,11 @@ function safeFileName(name: string) {
 
 export async function createBookkeepingAttachmentUploadIntent(userId: string, input: CreateInput) {
   const context = await assertBookkeepingBusinessUnit(userId, input.businessUnitId, 'bookkeeping.write');
+  const useObjectStorage = isObjectStorageConfigured();
   const storageKey = `bookkeeping/${context.legalEntityId}/${input.businessUnitId}/${randomUUID()}/${safeFileName(input.fileName)}`;
-  const uploadUrl = await createUploadUrl({
-    storageKey,
-    contentType: input.contentType,
-    byteSize: input.byteSize,
-  });
+  const uploadUrl = useObjectStorage
+    ? await createUploadUrl({ storageKey, contentType: input.contentType, byteSize: input.byteSize })
+    : null;
 
   const client = await pool.connect();
   try {
@@ -121,7 +140,10 @@ export async function createBookkeepingAttachmentUploadIntent(userId: string, in
         input.contentType,
         input.byteSize,
         input.checksumSha256 ?? null,
-        JSON.stringify({ uploadStatus: 'pending' }),
+        JSON.stringify({
+          uploadStatus: 'pending',
+          storageProvider: useObjectStorage ? 'object_storage' : 'database',
+        }),
         userId,
       ]
     );
@@ -134,7 +156,8 @@ export async function createBookkeepingAttachmentUploadIntent(userId: string, in
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING id,legal_entity_id,business_unit_id,file_id,
          $9::text AS storage_key,$10::text AS file_name,$11::text AS content_type,$12::bigint::text AS byte_size,
-         $13::text AS checksum_sha256,target_type,target_id,category,description,status,
+         $13::text AS checksum_sha256,'active'::text AS file_status,$14::jsonb AS file_metadata,
+         target_type,target_id,category,description,status,
          created_by_user_id,archived_at,created_at,updated_at`,
       [
         context.legalEntityId,
@@ -150,6 +173,10 @@ export async function createBookkeepingAttachmentUploadIntent(userId: string, in
         input.contentType,
         input.byteSize,
         input.checksumSha256 ?? null,
+        JSON.stringify({
+          uploadStatus: 'pending',
+          storageProvider: useObjectStorage ? 'object_storage' : 'database',
+        }),
       ]
     );
     const row = attachmentResult.rows[0];
@@ -163,17 +190,32 @@ export async function createBookkeepingAttachmentUploadIntent(userId: string, in
       action: 'bookkeeping.attachment.created',
       resourceType: 'bookkeeping_attachment',
       resourceId: row.id,
-      metadata: { fileId, targetType: input.targetType, targetId: input.targetId, category: input.category },
+      metadata: {
+        fileId,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        category: input.category,
+        storageProvider: useObjectStorage ? 'object_storage' : 'database',
+      },
     });
 
     return {
       attachment: mapAttachment(row),
-      upload: {
-        url: uploadUrl,
-        method: 'PUT',
-        contentType: input.contentType,
-        expiresInSeconds: 900,
-      },
+      upload: useObjectStorage
+        ? {
+            provider: 'object_storage' as const,
+            url: uploadUrl!,
+            method: 'PUT' as const,
+            contentType: input.contentType,
+            expiresInSeconds: 900,
+          }
+        : {
+            provider: 'database' as const,
+            url: `/api/bookkeeping/attachments/${row.id}/content?businessUnitId=${encodeURIComponent(input.businessUnitId)}`,
+            method: 'POST' as const,
+            contentType: 'application/octet-stream',
+            credentials: 'include' as const,
+          },
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -183,20 +225,74 @@ export async function createBookkeepingAttachmentUploadIntent(userId: string, in
   }
 }
 
-export async function completeBookkeepingAttachment(userId: string, businessUnitId: string, attachmentId: string) {
+export async function storeBookkeepingAttachmentContent(
+  userId: string,
+  businessUnitId: string,
+  attachmentId: string,
+  content: Buffer
+) {
   const context = await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.write');
-  const result = await pool.query<AttachmentRow>(
-    `${selectAttachment} WHERE ba.id=$1 AND ba.business_unit_id=$2 AND ba.status='active'`,
-    [attachmentId, businessUnitId]
+  const row = await loadAttachmentRow(businessUnitId, attachmentId);
+  if (row.status !== 'active' || row.file_status !== 'active') {
+    throw new HttpError(409, 'ATTACHMENT_ARCHIVED', 'Archived attachments cannot receive uploads.');
+  }
+  if (row.file_metadata?.storageProvider !== 'database') {
+    throw new HttpError(409, 'ATTACHMENT_STORAGE_PROVIDER_MISMATCH', 'This attachment uses external object storage.');
+  }
+  if (content.length < 1 || content.length > 100 * 1024 * 1024) {
+    throw new HttpError(400, 'INVALID_ATTACHMENT_SIZE', 'Attachment files must be between 1 byte and 100 MB.');
+  }
+  const expectedSize = row.byte_size === null ? null : Number(row.byte_size);
+  if (expectedSize !== null && expectedSize !== content.length) {
+    throw new HttpError(400, 'ATTACHMENT_SIZE_MISMATCH', 'Uploaded attachment size does not match the prepared upload.');
+  }
+
+  await pool.query(
+    `INSERT INTO bookkeeping_attachment_contents (file_id,content)
+     VALUES ($1,$2)
+     ON CONFLICT (file_id) DO UPDATE
+       SET content=EXCLUDED.content,updated_at=now()`,
+    [row.file_id, content]
   );
-  const row = result.rows[0];
-  if (!row) throw new HttpError(404, 'ATTACHMENT_NOT_FOUND', 'Bookkeeping attachment not found.');
   await pool.query(
     `UPDATE files
      SET metadata=jsonb_set(metadata,'{uploadStatus}','"uploaded"'::jsonb,true)
      WHERE id=$1 AND business_unit_id=$2`,
     [row.file_id, businessUnitId]
   );
+  await writeAuditEvent({
+    actorUserId: userId,
+    legalEntityId: context.legalEntityId,
+    businessUnitId,
+    action: 'bookkeeping.attachment.content_stored',
+    resourceType: 'bookkeeping_attachment',
+    resourceId: attachmentId,
+    metadata: { fileId: row.file_id, byteSize: content.length },
+  });
+  return { id: attachmentId, fileId: row.file_id, byteSize: content.length };
+}
+
+export async function completeBookkeepingAttachment(userId: string, businessUnitId: string, attachmentId: string) {
+  const context = await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.write');
+  const row = await loadAttachmentRow(businessUnitId, attachmentId);
+  if (row.status !== 'active' || row.file_status !== 'active') {
+    throw new HttpError(409, 'ATTACHMENT_ARCHIVED', 'Archived attachments cannot complete uploads.');
+  }
+
+  if (row.file_metadata?.storageProvider === 'database') {
+    const stored = await pool.query('SELECT 1 FROM bookkeeping_attachment_contents WHERE file_id=$1', [row.file_id]);
+    if (!stored.rows[0]) {
+      throw new HttpError(409, 'ATTACHMENT_UPLOAD_INCOMPLETE', 'The attachment file has not been uploaded yet.');
+    }
+  } else {
+    await pool.query(
+      `UPDATE files
+       SET metadata=jsonb_set(metadata,'{uploadStatus}','"uploaded"'::jsonb,true)
+       WHERE id=$1 AND business_unit_id=$2`,
+      [row.file_id, businessUnitId]
+    );
+  }
+
   await writeAuditEvent({
     actorUserId: userId,
     legalEntityId: context.legalEntityId,
@@ -209,27 +305,75 @@ export async function completeBookkeepingAttachment(userId: string, businessUnit
   return getBookkeepingAttachment(userId, businessUnitId, attachmentId);
 }
 
-export async function getBookkeepingAttachmentDownload(userId: string, businessUnitId: string, attachmentId: string) {
-  const attachment = await getBookkeepingAttachment(userId, businessUnitId, attachmentId);
-  if (attachment.status !== 'active') {
+export async function getStoredBookkeepingAttachmentContent(userId: string, businessUnitId: string, attachmentId: string) {
+  await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.read');
+  const row = await loadAttachmentRow(businessUnitId, attachmentId);
+  if (row.status !== 'active' || row.file_status !== 'active') {
     throw new HttpError(409, 'ATTACHMENT_ARCHIVED', 'Archived attachments cannot be downloaded.');
   }
-  const url = await createDownloadUrl(attachment.storageKey);
-  return { attachment, download: { url, method: 'GET', expiresInSeconds: 900 } };
+  if (row.file_metadata?.storageProvider !== 'database') {
+    throw new HttpError(409, 'ATTACHMENT_STORAGE_PROVIDER_MISMATCH', 'This attachment uses external object storage.');
+  }
+  if (row.file_metadata?.uploadStatus !== 'uploaded') {
+    throw new HttpError(409, 'ATTACHMENT_UPLOAD_INCOMPLETE', 'The attachment upload has not been completed.');
+  }
+  const result = await pool.query<StoredAttachmentContentRow>(
+    `SELECT bac.content,f.file_name,f.content_type,f.byte_size::text
+     FROM bookkeeping_attachment_contents bac
+     JOIN files f ON f.id=bac.file_id
+     WHERE bac.file_id=$1 AND f.business_unit_id=$2`,
+    [row.file_id, businessUnitId]
+  );
+  const stored = result.rows[0];
+  if (!stored) throw new HttpError(404, 'ATTACHMENT_FILE_NOT_FOUND', 'Stored attachment content was not found.');
+  return {
+    content: stored.content,
+    fileName: stored.file_name,
+    contentType: stored.content_type || 'application/octet-stream',
+    byteSize: stored.byte_size === null ? stored.content.length : Number(stored.byte_size),
+  };
+}
+
+export async function getBookkeepingAttachmentDownload(userId: string, businessUnitId: string, attachmentId: string) {
+  const row = await loadAttachmentRow(businessUnitId, attachmentId);
+  await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.read');
+  if (row.status !== 'active' || row.file_status !== 'active') {
+    throw new HttpError(409, 'ATTACHMENT_ARCHIVED', 'Archived attachments cannot be downloaded.');
+  }
+  if (row.file_metadata?.uploadStatus !== 'uploaded') {
+    throw new HttpError(409, 'ATTACHMENT_UPLOAD_INCOMPLETE', 'The attachment upload has not been completed.');
+  }
+  const attachment = mapAttachment(row);
+  if (row.file_metadata?.storageProvider === 'database') {
+    return {
+      attachment,
+      download: {
+        provider: 'database' as const,
+        url: `/api/bookkeeping/attachments/${attachmentId}/content?businessUnitId=${encodeURIComponent(businessUnitId)}`,
+        method: 'GET' as const,
+        credentials: 'include' as const,
+      },
+    };
+  }
+  const url = await createDownloadUrl(row.storage_key);
+  return {
+    attachment,
+    download: { provider: 'object_storage' as const, url, method: 'GET' as const, expiresInSeconds: 900 },
+  };
 }
 
 export async function archiveBookkeepingAttachment(userId: string, businessUnitId: string, attachmentId: string) {
   const context = await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.write');
-  const result = await pool.query<{ file_id: string }>(
+  const current = await loadAttachmentRow(businessUnitId, attachmentId);
+  if (current.status === 'archived') return { id: attachmentId, status: 'archived' as const };
+
+  await pool.query(
     `UPDATE bookkeeping_attachments
      SET status='archived',archived_at=now(),archived_by_user_id=$3
-     WHERE id=$1 AND business_unit_id=$2 AND status='active'
-     RETURNING file_id`,
+     WHERE id=$1 AND business_unit_id=$2`,
     [attachmentId, businessUnitId, userId]
   );
-  const row = result.rows[0];
-  if (!row) throw new HttpError(404, 'ATTACHMENT_NOT_FOUND', 'Active bookkeeping attachment not found.');
-  await pool.query(`UPDATE files SET status='archived' WHERE id=$1`, [row.file_id]);
+  await pool.query(`UPDATE files SET status='archived' WHERE id=$1`, [current.file_id]);
   await writeAuditEvent({
     actorUserId: userId,
     legalEntityId: context.legalEntityId,
@@ -237,7 +381,34 @@ export async function archiveBookkeepingAttachment(userId: string, businessUnitI
     action: 'bookkeeping.attachment.archived',
     resourceType: 'bookkeeping_attachment',
     resourceId: attachmentId,
-    metadata: { fileId: row.file_id },
+    metadata: { fileId: current.file_id },
   });
   return { id: attachmentId, status: 'archived' as const };
+}
+
+export async function deleteBookkeepingAttachment(userId: string, businessUnitId: string, attachmentId: string) {
+  const context = await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.write');
+  const current = await loadAttachmentRow(businessUnitId, attachmentId);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM bookkeeping_attachments WHERE id=$1 AND business_unit_id=$2', [attachmentId, businessUnitId]);
+    await client.query('DELETE FROM files WHERE id=$1 AND business_unit_id=$2', [current.file_id, businessUnitId]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+  await writeAuditEvent({
+    actorUserId: userId,
+    legalEntityId: context.legalEntityId,
+    businessUnitId,
+    action: 'bookkeeping.attachment.deleted',
+    resourceType: 'bookkeeping_attachment',
+    resourceId: attachmentId,
+    metadata: { fileId: current.file_id, fileName: current.file_name },
+  });
+  return { id: attachmentId, deleted: true as const };
 }
