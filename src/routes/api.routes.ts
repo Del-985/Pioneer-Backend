@@ -4,6 +4,7 @@ import { adminOverviewRouter } from '../modules/admin/admin-overview.routes.js';
 import { adminAuditRouter } from '../modules/audit/admin-audit.routes.js';
 import { authRouter } from '../modules/auth/auth.routes.js';
 import { bookkeepingRouter } from '../modules/bookkeeping/bookkeeping.routes.js';
+import { bookkeepingTransactionRouter } from '../modules/bookkeeping/transaction.routes.js';
 import { adminBusinessUnitRouter } from '../modules/business-units/admin-business-unit.routes.js';
 import { businessUnitRouter } from '../modules/business-units/business-unit.routes.js';
 import { healthRouter } from '../modules/health/health.routes.js';
@@ -21,6 +22,7 @@ export const apiRouter = Router();
 apiRouter.use('/health', healthRouter);
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/business-units', businessUnitRouter);
+apiRouter.use('/bookkeeping/transactions', bookkeepingTransactionRouter);
 apiRouter.use('/bookkeeping', bookkeepingRouter);
 apiRouter.use('/public/sites', publicSiteRouter);
 

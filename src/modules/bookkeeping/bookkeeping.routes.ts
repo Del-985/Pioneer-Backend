@@ -61,11 +61,10 @@ import {
   createRevenue,
   listExpenses,
   listRevenue,
-  postExpense,
-  postRevenue,
   updateExpense,
   updateRevenue,
 } from './admin-ledger-record.service.js';
+import { postExpenseAtomic, postRevenueAtomic } from './atomic-ledger-posting.service.js';
 
 export const bookkeepingRouter = Router();
 bookkeepingRouter.use(requireAuth);
@@ -283,7 +282,7 @@ bookkeepingRouter.post('/expenses/:expenseId/post', async (req, res) => {
   const { businessUnitId, payload } = bodyContext(req.body);
   const expenseId = requireRouteParam(req, 'expenseId');
   res.json({
-    data: await postExpense(
+    data: await postExpenseAtomic(
       req.auth!.userId,
       businessUnitId,
       expenseId,
@@ -324,7 +323,7 @@ bookkeepingRouter.post('/revenue/:revenueId/post', async (req, res) => {
   const { businessUnitId, payload } = bodyContext(req.body);
   const revenueId = requireRouteParam(req, 'revenueId');
   res.json({
-    data: await postRevenue(
+    data: await postRevenueAtomic(
       req.auth!.userId,
       businessUnitId,
       revenueId,
