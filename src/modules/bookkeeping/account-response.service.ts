@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import { bookkeepingAccountListQuerySchema } from './accounts.schemas.js';
 import { getBookkeepingAccount, listBookkeepingAccounts } from './accounts.service.js';
-import { getBusinessUnitAccountRollups } from './account-rollup.service.js';
+import { getScopedBusinessUnitAccountRollups } from './account-balance-rollup.service.js';
 
 type ListQuery = z.infer<typeof bookkeepingAccountListQuerySchema>;
 type AccountLike = {
@@ -21,7 +21,7 @@ export async function listBookkeepingAccountsForBusinessUnit(
 ) {
   const [result, rollup] = await Promise.all([
     listBookkeepingAccounts(userId, businessUnitId, query),
-    getBusinessUnitAccountRollups(userId, businessUnitId),
+    getScopedBusinessUnitAccountRollups(userId, businessUnitId),
   ]);
   const accounts = result.data as AccountLike[];
 
@@ -46,7 +46,7 @@ export async function getBookkeepingAccountForBusinessUnit(
 ) {
   const [account, rollup] = await Promise.all([
     getBookkeepingAccount(userId, businessUnitId, accountId) as Promise<AccountLike>,
-    getBusinessUnitAccountRollups(userId, businessUnitId),
+    getScopedBusinessUnitAccountRollups(userId, businessUnitId),
   ]);
   return {
     ...account,
