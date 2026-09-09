@@ -22,12 +22,31 @@ const envSchema = z.object({
   SMTP_FROM: z.string().trim().min(1).max(320).optional(),
   PASSWORD_RESET_URL: z.string().url().optional(),
   NOTIFICATION_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25),
+  OBJECT_STORAGE_ENDPOINT: z.string().url().optional(),
+  OBJECT_STORAGE_REGION: z.string().trim().min(1).default('auto'),
+  OBJECT_STORAGE_BUCKET: z.string().trim().min(1).optional(),
+  OBJECT_STORAGE_ACCESS_KEY_ID: z.string().trim().min(1).optional(),
+  OBJECT_STORAGE_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  OBJECT_STORAGE_FORCE_PATH_STYLE: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  OBJECT_STORAGE_PRESIGN_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
 }).superRefine((value, ctx) => {
   if (value.SMTP_HOST && !value.SMTP_FROM) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['SMTP_FROM'], message: 'SMTP_FROM is required when SMTP_HOST is configured.' });
   }
   if ((value.SMTP_USER && !value.SMTP_PASSWORD) || (!value.SMTP_USER && value.SMTP_PASSWORD)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['SMTP_PASSWORD'], message: 'SMTP_USER and SMTP_PASSWORD must be configured together.' });
+  }
+
+  const storageConfigured = Boolean(
+    value.OBJECT_STORAGE_ENDPOINT ||
+    value.OBJECT_STORAGE_BUCKET ||
+    value.OBJECT_STORAGE_ACCESS_KEY_ID ||
+    value.OBJECT_STORAGE_SECRET_ACCESS_KEY
+  );
+  if (storageConfigured) {
+    if (!value.OBJECT_STORAGE_BUCKET) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OBJECT_STORAGE_BUCKET'], message: 'OBJECT_STORAGE_BUCKET is required when object storage is configured.' });
+    if (!value.OBJECT_STORAGE_ACCESS_KEY_ID) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OBJECT_STORAGE_ACCESS_KEY_ID'], message: 'OBJECT_STORAGE_ACCESS_KEY_ID is required when object storage is configured.' });
+    if (!value.OBJECT_STORAGE_SECRET_ACCESS_KEY) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['OBJECT_STORAGE_SECRET_ACCESS_KEY'], message: 'OBJECT_STORAGE_SECRET_ACCESS_KEY is required when object storage is configured.' });
   }
 });
 
