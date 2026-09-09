@@ -1,6 +1,12 @@
 # Pioneer Backend API
 
-Pioneer Backend is the shared modular-monolith API for Pioneer Legacy Works. Routes live below `/api`; URL-path API versioning is intentionally not used.
+Pioneer Backend is the shared modular-monolith API for Pioneer Legacy Works.
+
+Canonical production origin: `https://api.pioneerlegacyworks.com`
+
+All production clients should use that hostname. The Render `onrender.com` hostname is deployment infrastructure only and is not part of the public API contract.
+
+Routes live below `/api`; URL-path API versioning is intentionally not used.
 
 ## Core invariants
 

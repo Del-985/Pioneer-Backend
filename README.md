@@ -2,6 +2,12 @@
 
 Shared backend platform for Pioneer Legacy Works and its business units, websites, bookkeeping tools, admin systems, and future applications.
 
+## Production API
+
+Canonical production origin: `https://api.pioneerlegacyworks.com`
+
+All Pioneer-owned frontends and applications should use that hostname. The Render `onrender.com` hostname is deployment infrastructure and is not part of the public application contract.
+
 ## Architectural rules
 
 - One backend API serves every Pioneer-owned frontend and application.
@@ -32,7 +38,9 @@ Shared backend platform for Pioneer Legacy Works and its business units, website
 5. Run `npm run migrate`.
 6. Run `npm run dev`.
 
-The first public endpoint is `GET /api/health`.
+Local health endpoint: `GET /api/health`.
+Production health endpoint: `GET https://api.pioneerlegacyworks.com/api/health`.
+Production readiness endpoint: `GET https://api.pioneerlegacyworks.com/api/health/ready`.
 
 ## Core data hierarchy
 
@@ -44,7 +52,7 @@ Pioneer Legacy Works platform
               +-- BusinessUnit
 ```
 
-Users receive scoped role assignments to the platform, legal entity, or business unit. Later operational modules such as customers, scheduling, invoicing, forms, and bookkeeping will resolve and validate this context before accessing data.
+Users receive scoped role assignments to the platform, legal entity, or business unit. Operational modules such as customers, scheduling, invoicing, forms, and bookkeeping resolve and validate this context before accessing data.
 
 ## Development sequence
 
