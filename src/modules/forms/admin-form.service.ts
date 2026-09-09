@@ -5,7 +5,11 @@ import { HttpError } from '../../lib/http-error.js';
 import { paginationMeta } from '../../lib/pagination.js';
 import { assertBusinessUnitPermission } from '../access/authorization.service.js';
 import { writeAuditEvent } from '../audit/admin-audit.service.js';
-import { createDownloadUrl, createUploadUrl } from '../bookkeeping/object-storage.service.js';
+import {
+  createDownloadUrl,
+  createUploadUrl,
+  isObjectStorageConfigured,
+} from '../bookkeeping/object-storage.service.js';
 import {
   createFormSchema,
   createFormUploadIntentSchema,
@@ -41,6 +45,13 @@ type FormFileRow = {
   byte_size: string | null;
   file_status: 'active' | 'archived' | null;
   file_metadata: Record<string, unknown> | null;
+};
+
+type StoredFormContent = {
+  content: Buffer;
+  file_name: string;
+  content_type: string | null;
+  byte_size: string | null;
 };
 
 function mapForm(row: FormRow) {
@@ -118,12 +129,15 @@ export async function createFormUploadIntent(
   input: CreateUploadIntentInput
 ) {
   await assertBusinessUnitPermission(userId, businessUnitId, 'forms.write');
+  const useObjectStorage = isObjectStorageConfigured();
   const storageKey = `forms/${businessUnitId}/${randomUUID()}/${safeFileName(input.fileName)}`;
-  const uploadUrl = await createUploadUrl({
-    storageKey,
-    contentType: input.contentType,
-    byteSize: input.byteSize,
-  });
+  const uploadUrl = useObjectStorage
+    ? await createUploadUrl({
+        storageKey,
+        contentType: input.contentType,
+        byteSize: input.byteSize,
+      })
+    : null;
 
   const client = await pool.connect();
   try {
@@ -141,7 +155,10 @@ export async function createFormUploadIntent(
         input.contentType,
         input.byteSize,
         input.checksumSha256 ?? null,
-        JSON.stringify({ uploadStatus: 'pending' }),
+        JSON.stringify({
+          uploadStatus: 'pending',
+          storageProvider: useObjectStorage ? 'object_storage' : 'database',
+        }),
         userId,
       ]
     );
@@ -172,17 +189,32 @@ export async function createFormUploadIntent(
       action: 'form.created',
       resourceType: 'form',
       resourceId: row.id,
-      metadata: { name: row.name, version: row.version, fileId, fileName: input.fileName },
+      metadata: {
+        name: row.name,
+        version: row.version,
+        fileId,
+        fileName: input.fileName,
+        storageProvider: useObjectStorage ? 'object_storage' : 'database',
+      },
     });
 
     return {
       form: mapForm(row),
-      upload: {
-        url: uploadUrl,
-        method: 'PUT' as const,
-        contentType: input.contentType,
-        expiresInSeconds: 900,
-      },
+      upload: useObjectStorage
+        ? {
+            provider: 'object_storage' as const,
+            url: uploadUrl!,
+            method: 'PUT' as const,
+            contentType: input.contentType,
+            expiresInSeconds: 900,
+          }
+        : {
+            provider: 'database' as const,
+            url: `/api/admin/business-units/${businessUnitId}/forms/${row.id}/content`,
+            method: 'PUT' as const,
+            contentType: 'application/octet-stream',
+            credentials: 'include' as const,
+          },
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -190,6 +222,60 @@ export async function createFormUploadIntent(
   } finally {
     client.release();
   }
+}
+
+export async function storeFormContent(
+  userId: string,
+  businessUnitId: string,
+  formId: string,
+  content: Buffer
+) {
+  await assertBusinessUnitPermission(userId, businessUnitId, 'forms.write');
+  const formFile = await getFormFile(businessUnitId, formId);
+  if (!formFile.file_id) {
+    throw new HttpError(409, 'FORM_FILE_REQUIRED', 'This form does not have an uploaded file.');
+  }
+  if (formFile.form_status !== 'active') {
+    throw new HttpError(409, 'FORM_ARCHIVED', 'Archived forms cannot receive uploads.');
+  }
+  if (formFile.file_status !== 'active') {
+    throw new HttpError(409, 'FORM_FILE_ARCHIVED', 'The file attached to this form is archived.');
+  }
+  if (formFile.file_metadata?.storageProvider !== 'database') {
+    throw new HttpError(409, 'FORM_STORAGE_PROVIDER_MISMATCH', 'This form file uses external object storage.');
+  }
+  if (content.length < 1 || content.length > 25 * 1024 * 1024) {
+    throw new HttpError(400, 'INVALID_FORM_FILE_SIZE', 'Form files must be between 1 byte and 25 MB.');
+  }
+  const expectedSize = formFile.byte_size === null ? null : Number(formFile.byte_size);
+  if (expectedSize !== null && content.length !== expectedSize) {
+    throw new HttpError(400, 'FORM_FILE_SIZE_MISMATCH', 'Uploaded file size does not match the prepared form upload.');
+  }
+
+  await pool.query(
+    `INSERT INTO form_file_contents (file_id, content)
+     VALUES ($1,$2)
+     ON CONFLICT (file_id) DO UPDATE SET content=EXCLUDED.content, created_at=now()`,
+    [formFile.file_id, content]
+  );
+
+  await pool.query(
+    `UPDATE files
+     SET metadata=jsonb_set(metadata,'{uploadStatus}','"uploaded"'::jsonb,true)
+     WHERE id=$1 AND business_unit_id=$2`,
+    [formFile.file_id, businessUnitId]
+  );
+
+  await writeAuditEvent({
+    actorUserId: userId,
+    businessUnitId,
+    action: 'form.file_stored',
+    resourceType: 'form',
+    resourceId: formId,
+    metadata: { fileId: formFile.file_id, byteSize: content.length, storageProvider: 'database' },
+  });
+
+  return { id: formId, fileId: formFile.file_id, byteSize: content.length };
 }
 
 export async function completeFormUpload(userId: string, businessUnitId: string, formId: string) {
@@ -202,12 +288,20 @@ export async function completeFormUpload(userId: string, businessUnitId: string,
     throw new HttpError(409, 'FORM_ARCHIVED', 'Archived forms cannot complete uploads.');
   }
 
-  await pool.query(
-    `UPDATE files
-     SET metadata=jsonb_set(metadata,'{uploadStatus}','"uploaded"'::jsonb,true)
-     WHERE id=$1 AND business_unit_id=$2`,
-    [formFile.file_id, businessUnitId]
-  );
+  if (formFile.file_metadata?.storageProvider === 'database') {
+    const contentResult = await pool.query('SELECT 1 FROM form_file_contents WHERE file_id=$1', [formFile.file_id]);
+    if (!contentResult.rows[0]) {
+      throw new HttpError(409, 'FORM_UPLOAD_INCOMPLETE', 'The form file has not been uploaded yet.');
+    }
+  } else {
+    await pool.query(
+      `UPDATE files
+       SET metadata=jsonb_set(metadata,'{uploadStatus}','"uploaded"'::jsonb,true)
+       WHERE id=$1 AND business_unit_id=$2`,
+      [formFile.file_id, businessUnitId]
+    );
+  }
+
   await writeAuditEvent({
     actorUserId: userId,
     businessUnitId,
@@ -241,6 +335,23 @@ export async function getFormDownload(userId: string, businessUnitId: string, fo
     throw new HttpError(409, 'FORM_UPLOAD_INCOMPLETE', 'The form file upload has not been completed.');
   }
 
+  if (formFile.file_metadata?.storageProvider === 'database') {
+    return {
+      file: {
+        id: formFile.file_id,
+        fileName: formFile.file_name,
+        contentType: formFile.content_type,
+        byteSize: formFile.byte_size === null ? null : Number(formFile.byte_size),
+      },
+      download: {
+        provider: 'database' as const,
+        url: `/api/admin/business-units/${businessUnitId}/forms/${formId}/content`,
+        method: 'GET' as const,
+        credentials: 'include' as const,
+      },
+    };
+  }
+
   const url = await createDownloadUrl(formFile.storage_key);
   return {
     file: {
@@ -249,7 +360,48 @@ export async function getFormDownload(userId: string, businessUnitId: string, fo
       contentType: formFile.content_type,
       byteSize: formFile.byte_size === null ? null : Number(formFile.byte_size),
     },
-    download: { url, method: 'GET' as const, expiresInSeconds: 900 },
+    download: {
+      provider: 'object_storage' as const,
+      url,
+      method: 'GET' as const,
+      expiresInSeconds: 900,
+    },
+  };
+}
+
+export async function getStoredFormContent(userId: string, businessUnitId: string, formId: string) {
+  await assertBusinessUnitPermission(userId, businessUnitId, 'forms.read');
+  const formFile = await getFormFile(businessUnitId, formId);
+  if (formFile.form_status !== 'active') {
+    throw new HttpError(409, 'FORM_ARCHIVED', 'Archived forms cannot be downloaded.');
+  }
+  if (!formFile.file_id || !formFile.file_name) {
+    throw new HttpError(404, 'FORM_FILE_NOT_FOUND', 'No file is attached to this form.');
+  }
+  if (formFile.file_status !== 'active') {
+    throw new HttpError(409, 'FORM_FILE_ARCHIVED', 'The file attached to this form is archived.');
+  }
+  if (formFile.file_metadata?.storageProvider !== 'database') {
+    throw new HttpError(409, 'FORM_STORAGE_PROVIDER_MISMATCH', 'This form file uses external object storage.');
+  }
+  if (formFile.file_metadata?.uploadStatus !== 'uploaded') {
+    throw new HttpError(409, 'FORM_UPLOAD_INCOMPLETE', 'The form file upload has not been completed.');
+  }
+
+  const result = await pool.query<StoredFormContent>(
+    `SELECT ffc.content, fi.file_name, fi.content_type, fi.byte_size::text
+     FROM form_file_contents ffc
+     JOIN files fi ON fi.id=ffc.file_id
+     WHERE ffc.file_id=$1 AND fi.business_unit_id=$2`,
+    [formFile.file_id, businessUnitId]
+  );
+  const row = result.rows[0];
+  if (!row) throw new HttpError(404, 'FORM_FILE_NOT_FOUND', 'Stored form content was not found.');
+  return {
+    content: row.content,
+    fileName: row.file_name,
+    contentType: row.content_type || 'application/octet-stream',
+    byteSize: row.byte_size === null ? row.content.length : Number(row.byte_size),
   };
 }
 
