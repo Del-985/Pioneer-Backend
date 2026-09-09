@@ -5,11 +5,13 @@ import {
   createBookkeepingMileage,
   exportBookkeepingMileage,
   listBookkeepingMileage,
+  updateBookkeepingMileage,
 } from './mileage-bookkeeping.service.js';
 import {
   createMileageSchema,
   mileageListQuerySchema,
   mileageSummaryQuerySchema,
+  updateMileageSchema,
 } from './completion.schemas.js';
 
 type LegacyMileageInput = {
@@ -21,6 +23,15 @@ type LegacyMileageInput = {
   endOdometer: number;
 };
 
+type LegacyMileagePatch = {
+  businessUnitId: string;
+  date?: string;
+  vehicle?: string;
+  purpose?: string;
+  startOdometer?: number;
+  endOdometer?: number;
+};
+
 type AnyRecord = Record<string, any>;
 
 async function businessUnitName(businessUnitId: string) {
@@ -28,8 +39,8 @@ async function businessUnitName(businessUnitId: string) {
   return result.rows[0]?.name ?? null;
 }
 
-async function resolveOrCreateVehicle(input: LegacyMileageInput) {
-  const name = input.vehicle.trim();
+async function resolveOrCreateVehicle(businessUnitId: string, vehicleName: string, startingOdometer: number) {
+  const name = vehicleName.trim();
   const existing = await pool.query<{ id: string }>(
     `SELECT id
      FROM vehicles
@@ -38,7 +49,7 @@ async function resolveOrCreateVehicle(input: LegacyMileageInput) {
        AND status IN ('active','maintenance')
      ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, created_at
      LIMIT 2`,
-    [input.businessUnitId, name]
+    [businessUnitId, name]
   );
 
   if (existing.rows.length > 1) {
@@ -54,7 +65,7 @@ async function resolveOrCreateVehicle(input: LegacyMileageInput) {
     `INSERT INTO vehicles (business_unit_id,name,current_odometer,notes)
      VALUES ($1,$2,$3,$4)
      RETURNING id`,
-    [input.businessUnitId, name, input.startOdometer, 'Created automatically from a bookkeeping mileage entry.']
+    [businessUnitId, name, startingOdometer, 'Created automatically from a bookkeeping mileage entry.']
   );
   const id = created.rows[0]?.id;
   if (!id) throw new HttpError(500, 'VEHICLE_CREATE_FAILED', 'Vehicle could not be created for the mileage entry.');
@@ -62,7 +73,7 @@ async function resolveOrCreateVehicle(input: LegacyMileageInput) {
 }
 
 export async function createLegacyBookkeepingMileage(userId: string, input: LegacyMileageInput) {
-  const vehicleId = await resolveOrCreateVehicle(input);
+  const vehicleId = await resolveOrCreateVehicle(input.businessUnitId, input.vehicle, input.startOdometer);
   const canonical = createMileageSchema.parse({
     businessUnitId: input.businessUnitId,
     vehicleId,
@@ -79,6 +90,51 @@ export async function createLegacyBookkeepingMileage(userId: string, input: Lega
 export async function createCanonicalBookkeepingMileage(userId: string, rawInput: unknown) {
   const input = createMileageSchema.parse(rawInput);
   return presentMileage(await createBookkeepingMileage(userId, input));
+}
+
+export async function updateLegacyBookkeepingMileage(
+  userId: string,
+  mileageId: string,
+  input: LegacyMileagePatch
+) {
+  const currentResult = await pool.query<{
+    vehicle_id: string;
+    start_odometer: string;
+  }>(
+    `SELECT vehicle_id,start_odometer::text
+     FROM mileage_logs
+     WHERE id=$1 AND business_unit_id=$2`,
+    [mileageId, input.businessUnitId]
+  );
+  const current = currentResult.rows[0];
+  if (!current) throw new HttpError(404, 'MILEAGE_NOT_FOUND', 'Mileage log not found.');
+
+  const startingOdometer = input.startOdometer ?? Number(current.start_odometer);
+  const vehicleId = input.vehicle
+    ? await resolveOrCreateVehicle(input.businessUnitId, input.vehicle, startingOdometer)
+    : current.vehicle_id;
+
+  const patch = updateMileageSchema.parse({
+    businessUnitId: input.businessUnitId,
+    vehicleId,
+    ...(input.startOdometer !== undefined ? { startOdometer: input.startOdometer } : {}),
+    ...(input.endOdometer !== undefined ? { endOdometer: input.endOdometer } : {}),
+    ...(input.purpose !== undefined ? { purpose: input.purpose } : {}),
+    ...(input.date !== undefined ? { startedAt: `${input.date}T12:00:00Z` } : {}),
+  });
+
+  const updated = await updateBookkeepingMileage(userId, mileageId, patch);
+  return presentMileage(updated, await businessUnitName(input.businessUnitId));
+}
+
+export async function updateCanonicalBookkeepingMileage(
+  userId: string,
+  mileageId: string,
+  rawInput: unknown
+) {
+  const input = updateMileageSchema.parse(rawInput);
+  const updated = await updateBookkeepingMileage(userId, mileageId, input);
+  return presentMileage(updated, await businessUnitName(input.businessUnitId));
 }
 
 export async function listBookkeepingMileageCompat(userId: string, rawQuery: Record<string, unknown>) {
