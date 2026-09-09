@@ -19,7 +19,7 @@ All Pioneer-owned frontends and applications should use that hostname. The Rende
 - Public application routes live under the stable `/api` namespace without a version segment in the URL.
 - PostgreSQL is the primary system of record.
 
-## Initial stack
+## Stack
 
 - Node.js
 - TypeScript
@@ -28,6 +28,14 @@ All Pioneer-owned frontends and applications should use that hostname. The Rende
 - Zod for configuration validation
 - Helmet and CORS for HTTP hardening
 - Pino for structured logging
+- S3-compatible object storage for attachment bytes when configured
+
+## API documentation
+
+- `docs/BACKEND_API.md` — shared backend contract and core modules.
+- `docs/BOOKKEEPING_API.md` — Bookkeeping foundations, Chart of Accounts, periods, and journals.
+- `docs/BOOKKEEPING_TRANSACTIONS.md` — unified transaction lifecycle.
+- `docs/BOOKKEEPING_OPERATIONS.md` — dashboard, attachments, mileage, reconciliation, reports, intercompany, recurring accounting, audit, and idempotency.
 
 ## Local development
 
