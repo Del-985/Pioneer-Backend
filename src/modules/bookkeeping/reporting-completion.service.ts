@@ -81,7 +81,9 @@ async function trialBalance(userId:string,query:ReportQuery){
     [userId,query.businessUnitId??null,query.legalEntityId??null,asOf,eliminate]
   );
   const data=result.rows.map(r=>({accountId:r.account_id,code:r.code,name:r.name,accountType:r.account_type,debitCents:Number(r.debits),creditCents:Number(r.credits),netDebitCents:Number(r.debits)-Number(r.credits)}));
-  return {report:'trial-balance',scope:scopeInfo(query),asOf,data,totals:{debitCents:data.reduce((s,r)=>s+r.debitCents,0),creditCents:data.reduce((s,r)=>s+r.creditCents,0)}};
+  const debitBalanceCents=data.reduce((sum,row)=>sum+Math.max(row.netDebitCents,0),0);
+  const creditBalanceCents=data.reduce((sum,row)=>sum+Math.max(-row.netDebitCents,0),0);
+  return {report:'trial-balance',scope:scopeInfo(query),asOf,data,totals:{debitCents:debitBalanceCents,creditCents:creditBalanceCents}};
 }
 
 async function profitLoss(userId:string,query:ReportQuery){
