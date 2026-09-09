@@ -33,7 +33,7 @@ async function assertScope(userId:string, businessUnitId?:string, legalEntityId?
   if(legalEntityId) await assertBookkeepingLegalEntity(userId,legalEntityId,'bookkeeping.read');
 }
 
-function scopeInfo(query:{businessUnitId?:string;legalEntityId?:string}){
+function scopeInfo(query:{businessUnitId?:string|undefined;legalEntityId?:string|undefined}){
   return {
     type: query.businessUnitId ? 'business_unit' : query.legalEntityId ? 'legal_entity' : 'all_businesses',
     businessUnitId: query.businessUnitId ?? null,
@@ -207,7 +207,7 @@ async function generalLedger(userId:string,query:ReportQuery){
 
 async function accountRegister(userId:string,query:ReportQuery){
   if(!query.accountId)throw new HttpError(400,'ACCOUNT_ID_REQUIRED','Account register reporting requires accountId.');
-  let businessUnitId=query.businessUnitId;
+  const businessUnitId=query.businessUnitId;
   if(!businessUnitId)throw new HttpError(400,'BUSINESS_UNIT_REQUIRED','Account register reporting requires businessUnitId.');
   await assertBookkeepingBusinessUnit(userId,businessUnitId,'bookkeeping.read');
   const account=await pool.query<{account_type:string;code:string;name:string}>(`SELECT account_type,code,name FROM ledger_accounts la JOIN business_units bu ON bu.legal_entity_id=la.legal_entity_id WHERE la.id=$1 AND bu.id=$2`,[query.accountId,businessUnitId]);
@@ -243,7 +243,10 @@ export async function getBookkeepingDashboard(userId:string,query:DashboardQuery
      GROUP BY la.id,la.code,la.name ORDER BY la.code`,
     [userId,query.businessUnitId??null,query.legalEntityId??null,asOf,eliminate]
   );
-  const income=await profitLoss(userId,{...query,from,to:asOf,format:'json',limit:1000,offset:0});
+  const plQuery:ReportQuery={from,to:asOf,format:'json',limit:1000,offset:0};
+  if(query.businessUnitId)plQuery.businessUnitId=query.businessUnitId;
+  if(query.legalEntityId)plQuery.legalEntityId=query.legalEntityId;
+  const income=await profitLoss(userId,plQuery);
   const unreconciled=await pool.query<{count:string}>(
     `${accessibleUnitsCte}
      SELECT count(*)::text AS count FROM journal_lines jl JOIN journal_entries je ON je.id=jl.journal_entry_id JOIN ledger_accounts la ON la.id=jl.account_id

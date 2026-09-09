@@ -95,7 +95,7 @@ async function loadForGeneration(userId:string,businessUnitId:string,id:string){
   const result=await pool.query<RecurringRow>(`${selectRecurring} WHERE id=$1 AND business_unit_id=$2`,[id,businessUnitId]);const row=result.rows[0];if(!row)throw new HttpError(404,'RECURRING_NOT_FOUND','Recurring bookkeeping template not found.');if(!row.enabled)throw new HttpError(409,'RECURRING_DISABLED','Recurring bookkeeping template is disabled.');return row;
 }
 
-export async function generateRecurringBookkeeping(userId:string,id:string,input:{businessUnitId:string;scheduledDate?:string;post:boolean}){
+export async function generateRecurringBookkeeping(userId:string,id:string,input:{businessUnitId:string;scheduledDate?:string|undefined;post:boolean}){
   const row=await loadForGeneration(userId,input.businessUnitId,id);
   if(input.post)await assertBookkeepingBusinessUnit(userId,input.businessUnitId,'bookkeeping.post');
   const date=input.scheduledDate??row.next_run_date;
@@ -129,7 +129,7 @@ export async function generateRecurringBookkeeping(userId:string,id:string,input
   }catch(error){await pool.query(`DELETE FROM recurring_bookkeeping_runs WHERE recurring_id=$1 AND scheduled_date=$2 AND transaction_key=$3`,[id,date,`pending:${reservationId}`]);throw error;}
 }
 
-export async function generateDueRecurringBookkeeping(userId:string,input:{businessUnitId:string;throughDate?:string;post:boolean}){
+export async function generateDueRecurringBookkeeping(userId:string,input:{businessUnitId:string;throughDate?:string|undefined;post:boolean}){
   await assertBookkeepingBusinessUnit(userId,input.businessUnitId,'bookkeeping.write');if(input.post)await assertBookkeepingBusinessUnit(userId,input.businessUnitId,'bookkeeping.post');
   const through=input.throughDate??new Date().toISOString().slice(0,10);
   const result=await pool.query<{id:string}>(`SELECT id FROM recurring_bookkeeping_templates WHERE business_unit_id=$1 AND enabled=true AND next_run_date<=$2 ORDER BY next_run_date,id LIMIT 100`,[input.businessUnitId,through]);

@@ -117,7 +117,7 @@ export async function reconcileIntercompany(userId:string,id:string,input:{fromB
   return {id,status:'settled' as const,reconciled:true};
 }
 
-export async function listIntercompanyEliminations(userId:string,input:{from?:string;to?:string}){
+export async function listIntercompanyEliminations(userId:string,input:{from?:string|undefined;to?:string|undefined}){
   const access=await pool.query<{allowed:boolean}>(
     `SELECT EXISTS(SELECT 1 FROM user_role_assignments ura JOIN roles r ON r.id=ura.role_id JOIN role_permissions rp ON rp.role_id=r.id JOIN permissions p ON p.id=rp.permission_id WHERE ura.user_id=$1 AND p.key='intercompany.read' AND r.scope='platform' AND ura.legal_entity_id IS NULL AND ura.business_unit_id IS NULL) AS allowed`,[userId]
   );
