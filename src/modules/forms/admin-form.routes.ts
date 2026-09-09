@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
+import { HttpError } from '../../lib/http-error.js';
 import { requireRouteParam } from '../../lib/route-param.js';
 import { requireAuth } from '../../middleware/auth.js';
 import {
@@ -12,7 +13,9 @@ import {
   createForm,
   createFormUploadIntent,
   getFormDownload,
+  getStoredFormContent,
   listForms,
+  storeFormContent,
   updateForm,
 } from './admin-form.service.js';
 
@@ -38,6 +41,30 @@ adminFormRouter.post('/upload-intent', requireAuth, async (req, res) => {
       createFormUploadIntentSchema.parse(req.body)
     ),
   });
+});
+
+adminFormRouter.put(
+  '/:formId/content',
+  requireAuth,
+  express.raw({ type: 'application/octet-stream', limit: '25mb' }),
+  async (req, res) => {
+    const businessUnitId = requireRouteParam(req, 'businessUnitId');
+    const formId = requireRouteParam(req, 'formId');
+    if (!Buffer.isBuffer(req.body)) {
+      throw new HttpError(400, 'FORM_FILE_REQUIRED', 'A form file is required.');
+    }
+    res.json({ data: await storeFormContent(req.auth!.userId, businessUnitId, formId, req.body) });
+  }
+);
+
+adminFormRouter.get('/:formId/content', requireAuth, async (req, res) => {
+  const businessUnitId = requireRouteParam(req, 'businessUnitId');
+  const formId = requireRouteParam(req, 'formId');
+  const stored = await getStoredFormContent(req.auth!.userId, businessUnitId, formId);
+  res.setHeader('Content-Type', stored.contentType);
+  res.setHeader('Content-Length', String(stored.content.length));
+  res.attachment(stored.fileName);
+  res.send(stored.content);
 });
 
 adminFormRouter.post('/:formId/complete', requireAuth, async (req, res) => {
