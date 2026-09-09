@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after } from 'node:test';
 import { pool } from '../src/db/pool.js';
+import { getBookkeepingDashboard } from '../src/modules/bookkeeping/reporting-completion.service.js';
 import {
   createBookkeepingTransaction,
   getBookkeepingTransaction,
@@ -76,7 +77,7 @@ async function seedBooks() {
   );
 }
 
-test('unified transaction workflow supports transfer posting, filtering, reversal, voiding, and period locks', async () => {
+test('unified transaction workflow supports posting, reporting, reversal, voiding, and period locks', async () => {
   await seedBooks();
 
   const transfer = await createBookkeepingTransaction(
@@ -107,14 +108,8 @@ test('unified transaction workflow supports transfer posting, filtering, reversa
   assert.equal(postedTransfer.status, 'posted');
   assert.ok(postedTransfer.journalEntryId);
   assert.equal(postedTransfer.journal?.status, 'posted');
-  assert.equal(
-    postedTransfer.journal?.lines.reduce((sum, line) => sum + line.debitCents, 0),
-    3000
-  );
-  assert.equal(
-    postedTransfer.journal?.lines.reduce((sum, line) => sum + line.creditCents, 0),
-    3000
-  );
+  assert.equal(postedTransfer.journal?.lines.reduce((sum, line) => sum + line.debitCents, 0), 3000);
+  assert.equal(postedTransfer.journal?.lines.reduce((sum, line) => sum + line.creditCents, 0), 3000);
 
   const filtered = await listBookkeepingTransactions(
     ids.user,
@@ -128,14 +123,84 @@ test('unified transaction workflow supports transfer posting, filtering, reversa
   );
   assert.ok(filtered.data.some((item) => item.id === transfer.id));
 
-  const reversed = await reverseBookkeepingTransaction(ids.user, transfer.id, {
+  const reversedTransfer = await reverseBookkeepingTransaction(ids.user, transfer.id, {
     businessUnitId: ids.unit,
     entryNumber: 'TR-0001-R',
     transactionDate: '2026-09-20',
     description: 'Reverse test transfer',
   });
-  assert.equal(reversed.transaction.status, 'reversed');
-  assert.equal(reversed.reversalJournal.status, 'posted');
+  assert.equal(reversedTransfer.transaction.status, 'reversed');
+  assert.equal(reversedTransfer.reversalJournal.status, 'posted');
+
+  const expense = await createBookkeepingTransaction(
+    ids.user,
+    createTransactionSchema.parse({
+      type: 'expense',
+      businessUnitId: ids.unit,
+      transactionDate: '2026-09-15',
+      description: 'Temporary expense',
+      amountCents: 21000,
+      vendor: 'Test Vendor',
+      expenseAccountId: ids.expense,
+      paymentAccountId: ids.cash,
+    })
+  );
+  await postBookkeepingTransaction(ids.user, expense.id, {
+    businessUnitId: ids.unit,
+    entryNumber: 'EXP-0210',
+  });
+  const reversedExpense = await reverseBookkeepingTransaction(ids.user, expense.id, {
+    businessUnitId: ids.unit,
+    entryNumber: 'EXP-0210-R',
+    transactionDate: '2026-09-18',
+    description: 'Reverse temporary expense',
+  });
+  assert.equal(reversedExpense.transaction.status, 'reversed');
+
+  const income = await createBookkeepingTransaction(
+    ids.user,
+    createTransactionSchema.parse({
+      type: 'income',
+      businessUnitId: ids.unit,
+      transactionDate: '2026-09-19',
+      description: 'Service income',
+      amountCents: 21000,
+      incomeAccountId: ids.income,
+      depositAccountId: ids.cash,
+    })
+  );
+  await postBookkeepingTransaction(ids.user, income.id, {
+    businessUnitId: ids.unit,
+    entryNumber: 'INC-0210',
+  });
+
+  const dashboard = await getBookkeepingDashboard(ids.user, {
+    businessUnitId: ids.unit,
+    asOf: '2026-09-30',
+  });
+  assert.equal(dashboard.yearToDate.revenueCents, 21000);
+  assert.equal(dashboard.yearToDate.expenseCents, 0);
+  assert.equal(dashboard.yearToDate.netIncomeCents, 21000);
+
+  const invalidIncome = await createBookkeepingTransaction(
+    ids.user,
+    createTransactionSchema.parse({
+      type: 'income',
+      businessUnitId: ids.unit,
+      transactionDate: '2026-09-21',
+      description: 'Invalid account-role income',
+      amountCents: 5000,
+      incomeAccountId: ids.income,
+      depositAccountId: ids.expense,
+    })
+  );
+  await assert.rejects(
+    postBookkeepingTransaction(ids.user, invalidIncome.id, {
+      businessUnitId: ids.unit,
+      entryNumber: 'INC-BAD',
+    }),
+    /Deposit account .* must be an asset account/
+  );
 
   const manual = await createBookkeepingTransaction(
     ids.user,
@@ -161,7 +226,7 @@ test('unified transaction workflow supports transfer posting, filtering, reversa
   );
   assert.equal(voidStatus.rows[0]?.status, 'void');
 
-  const expense = await createBookkeepingTransaction(
+  const lockedExpense = await createBookkeepingTransaction(
     ids.user,
     createTransactionSchema.parse({
       type: 'expense',
@@ -177,7 +242,7 @@ test('unified transaction workflow supports transfer posting, filtering, reversa
 
   await pool.query(`UPDATE accounting_periods SET status = 'closed' WHERE id = $1`, [ids.period]);
   await assert.rejects(
-    updateBookkeepingTransaction(ids.user, expense.id, {
+    updateBookkeepingTransaction(ids.user, lockedExpense.id, {
       businessUnitId: ids.unit,
       amountCents: 1200,
     }),
@@ -185,7 +250,7 @@ test('unified transaction workflow supports transfer posting, filtering, reversa
   );
   await pool.query(`UPDATE accounting_periods SET status = 'open' WHERE id = $1`, [ids.period]);
 
-  const detail = await getBookkeepingTransaction(ids.user, expense.id);
+  const detail = await getBookkeepingTransaction(ids.user, lockedExpense.id);
   assert.equal(detail.type, 'expense');
   assert.equal(detail.amountCents, 1000);
 });
