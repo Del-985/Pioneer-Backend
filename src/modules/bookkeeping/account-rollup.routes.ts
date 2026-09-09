@@ -4,6 +4,7 @@ import { requireRouteParam } from '../../lib/route-param.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { accountRegisterQuerySchema } from './accounts.schemas.js';
 import { reportQuerySchema } from './completion.schemas.js';
+import { getAccurateCashFlowReport } from './cash-flow-report.service.js';
 import { getBookkeepingReport } from './reporting-completion.service.js';
 import { getRolledAccountRegister, rollupProfitLossReport } from './account-rollup.service.js';
 
@@ -39,6 +40,18 @@ function sendProfitLossCsv(res: Response, report: Record<string, any>) {
   res.send(body);
 }
 
+function sendCashFlowCsv(res: Response, report: Record<string, any>) {
+  const rows = Array.isArray(report.data) ? report.data as Array<Record<string, any>> : [];
+  const body = [
+    'category,amountCents',
+    ...rows.map((row) => `${csvEscape(row.category)},${csvEscape(row.amountCents)}`),
+    `netCashChange,${csvEscape((report.totals as Record<string, unknown> | undefined)?.netCashChangeCents)}`,
+  ].join('\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="cash-flow.csv"');
+  res.send(body);
+}
+
 bookkeepingAccountRollupRouter.get('/reports/profit-loss', async (req, res) => {
   const query = reportQuerySchema.parse(req.query);
   const raw = await getBookkeepingReport(req.auth!.userId, 'profit-loss', { ...query, format: 'json' });
@@ -49,6 +62,16 @@ bookkeepingAccountRollupRouter.get('/reports/profit-loss', async (req, res) => {
   const report = await rollupProfitLossReport(req.auth!.userId, scopeQuery, raw as Record<string, any>);
   if (query.format === 'csv') {
     sendProfitLossCsv(res, report);
+    return;
+  }
+  res.json({ data: report });
+});
+
+bookkeepingAccountRollupRouter.get('/reports/cash-flow', async (req, res) => {
+  const query = reportQuerySchema.parse(req.query);
+  const report = await getAccurateCashFlowReport(req.auth!.userId, query);
+  if (query.format === 'csv') {
+    sendCashFlowCsv(res, report as Record<string, any>);
     return;
   }
   res.json({ data: report });
