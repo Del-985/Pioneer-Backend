@@ -66,7 +66,35 @@ bookkeepingTransactionRouter.post('/:transactionId/post', async (req, res) => {
 
 bookkeepingTransactionRouter.post('/:transactionId/void', async (req, res) => {
   const transactionId = requireRouteParam(req, 'transactionId');
-  res.json({ data: await voidBookkeepingTransaction(req.auth!.userId, transactionId, voidTransactionSchema.parse(req.body)) });
+  const input = voidTransactionSchema.parse(req.body);
+  const transaction = await getBookkeepingTransaction(req.auth!.userId, transactionId);
+
+  if (transaction.status === 'reversed') {
+    res.json({ data: transaction });
+    return;
+  }
+
+  if (transaction.status === 'posted') {
+    const reversalInput = reverseTransactionSchema.parse({
+      businessUnitId: input.businessUnitId,
+      entryNumber: `REV-${Date.now().toString(36).toUpperCase()}`,
+      transactionDate: new Date().toISOString().slice(0, 10),
+      description: `Reversal of ${transaction.description}`.slice(0, 1000),
+    });
+    const result = await runIdempotent({
+      userId: req.auth!.userId,
+      operation: `transaction.reverse:${transactionId}`,
+      key: normalizeIdempotencyKey(req.get('Idempotency-Key')),
+      payload: reversalInput,
+      successStatus: 201,
+      execute: () => reverseBookkeepingTransaction(req.auth!.userId, transactionId, reversalInput),
+    });
+    res.setHeader('Idempotency-Replayed', String(result.replayed));
+    res.status(result.status).json({ data: result.value });
+    return;
+  }
+
+  res.json({ data: await voidBookkeepingTransaction(req.auth!.userId, transactionId, input) });
 });
 
 bookkeepingTransactionRouter.post('/:transactionId/reverse', async (req, res) => {
