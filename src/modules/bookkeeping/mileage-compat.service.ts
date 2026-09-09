@@ -1,6 +1,7 @@
 import { pool } from '../../db/pool.js';
 import { HttpError } from '../../lib/http-error.js';
 import { currentAccountingDate } from './accounting-date.js';
+import { assertBookkeepingBusinessUnit } from './bookkeeping-authorization.service.js';
 import {
   createBookkeepingMileage,
   exportBookkeepingMileage,
@@ -73,6 +74,7 @@ async function resolveOrCreateVehicle(businessUnitId: string, vehicleName: strin
 }
 
 export async function createLegacyBookkeepingMileage(userId: string, input: LegacyMileageInput) {
+  await assertBookkeepingBusinessUnit(userId, input.businessUnitId, 'bookkeeping.write');
   const vehicleId = await resolveOrCreateVehicle(input.businessUnitId, input.vehicle, input.startOdometer);
   const canonical = createMileageSchema.parse({
     businessUnitId: input.businessUnitId,
@@ -97,6 +99,7 @@ export async function updateLegacyBookkeepingMileage(
   mileageId: string,
   input: LegacyMileagePatch
 ) {
+  await assertBookkeepingBusinessUnit(userId, input.businessUnitId, 'bookkeeping.write');
   const currentResult = await pool.query<{
     vehicle_id: string;
     start_odometer: string;
