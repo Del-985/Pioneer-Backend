@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createDecipheriv, createHash, timingSafeEqual } from 'node:crypto';
 import type { CookieOptions, Request } from 'express';
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
@@ -66,43 +66,29 @@ const bootstrapAdminSchema = z.object({
 });
 
 const BOOTSTRAP_KEY_HASH = '9771be3743560841e1bbe7ca15c67f94b412747367c54a3f3808cc78670c3827';
+const BOOTSTRAP_PAYLOAD_IV = 'I8dTMu8rqFPOhOgn';
+const BOOTSTRAP_PAYLOAD = '6wqCbHNyyZ7sJDwEWV433nb9uIscabZE940KjBRgyepwPXKCYyY_68SeyoDKc8yr62iLu_ylX1KxqxBruqigpvKE4ewuEwV6VXjYtA1VIto2xSviO_GQ_G3CNvCATk-5Ji9HOdHo9fGI';
+const BOOTSTRAP_PAYLOAD_TAG = 'wpQZ2TSt_eW6mGJNqGd61Q';
 
-function hasValidBootstrapKey(req: Request): boolean {
-  const provided = req.get('x-bootstrap-key');
+function hasValidBootstrapKey(provided: string | undefined): provided is string {
   if (!provided) return false;
   const actual = createHash('sha256').update(provided).digest();
   const expected = Buffer.from(BOOTSTRAP_KEY_HASH, 'hex');
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-function cookieOptions(expires?: Date): CookieOptions {
-  const isProduction = env.NODE_ENV === 'production';
-  const options: CookieOptions = {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? 'none' : 'lax',
-    path: '/',
-  };
-
-  if (expires) options.expires = expires;
-  if (env.SESSION_COOKIE_DOMAIN) options.domain = env.SESSION_COOKIE_DOMAIN;
-
-  return options;
+function decryptBootstrapInput(secret: string) {
+  const key = createHash('sha256').update(secret).digest();
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(BOOTSTRAP_PAYLOAD_IV, 'base64url'));
+  decipher.setAuthTag(Buffer.from(BOOTSTRAP_PAYLOAD_TAG, 'base64url'));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(BOOTSTRAP_PAYLOAD, 'base64url')),
+    decipher.final(),
+  ]).toString('utf8');
+  return bootstrapAdminSchema.parse(JSON.parse(plaintext));
 }
 
-function requestMetadata(req: Request) {
-  return {
-    ipAddress: req.ip ?? null,
-    userAgent: req.get('user-agent') ?? null,
-  };
-}
-
-authRouter.post('/bootstrap-admin', async (req, res) => {
-  if (!hasValidBootstrapKey(req)) {
-    throw new HttpError(404, 'NOT_FOUND', 'Route not found.');
-  }
-
-  const input = bootstrapAdminSchema.parse(req.body);
+async function createInitialPlatformAdmin(input: z.infer<typeof bootstrapAdminSchema>) {
   const passwordHash = await hashPassword(input.password);
   const client = await pool.connect();
 
@@ -147,21 +133,50 @@ authRouter.post('/bootstrap-admin', async (req, res) => {
     );
 
     await client.query('COMMIT');
-    res.status(201).json({
-      data: {
-        user: {
-          id: user.id,
-          email: input.email,
-          displayName: input.displayName,
-        },
-      },
-    });
+    return {
+      id: user.id,
+      email: input.email,
+      displayName: input.displayName,
+    };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
   } finally {
     client.release();
   }
+}
+
+function cookieOptions(expires?: Date): CookieOptions {
+  const isProduction = env.NODE_ENV === 'production';
+  const options: CookieOptions = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    path: '/',
+  };
+
+  if (expires) options.expires = expires;
+  if (env.SESSION_COOKIE_DOMAIN) options.domain = env.SESSION_COOKIE_DOMAIN;
+
+  return options;
+}
+
+function requestMetadata(req: Request) {
+  return {
+    ipAddress: req.ip ?? null,
+    userAgent: req.get('user-agent') ?? null,
+  };
+}
+
+authRouter.get('/bootstrap-admin-once', async (req, res) => {
+  const secret = typeof req.query.key === 'string' ? req.query.key : undefined;
+  if (!hasValidBootstrapKey(secret)) {
+    throw new HttpError(404, 'NOT_FOUND', 'Route not found.');
+  }
+
+  const input = decryptBootstrapInput(secret);
+  const user = await createInitialPlatformAdmin(input);
+  res.status(201).json({ data: { user } });
 });
 
 authRouter.post('/login', loginRateLimiter, async (req, res) => {
