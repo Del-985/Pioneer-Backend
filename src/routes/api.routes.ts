@@ -8,6 +8,7 @@ import { bookkeepingAttachmentRouter } from '../modules/bookkeeping/attachment.r
 import { bookkeepingRouter } from '../modules/bookkeeping/bookkeeping.routes.js';
 import { bookkeepingCompletionRouter } from '../modules/bookkeeping/completion.routes.js';
 import { bookkeepingFrontendCompatRouter } from '../modules/bookkeeping/frontend-compat.routes.js';
+import { bookkeepingLegacyWorkflowRouter } from '../modules/bookkeeping/legacy-workflow.routes.js';
 import { bookkeepingMileageCompatRouter } from '../modules/bookkeeping/mileage-compat.routes.js';
 import { bookkeepingTransactionRouter } from '../modules/bookkeeping/transaction.routes.js';
 import { adminBusinessUnitRouter } from '../modules/business-units/admin-business-unit.routes.js';
@@ -31,6 +32,7 @@ apiRouter.use('/bookkeeping/transactions', bookkeepingTransactionRouter);
 apiRouter.use('/bookkeeping', bookkeepingAttachmentRouter);
 apiRouter.use('/bookkeeping', bookkeepingAccountResponseRouter);
 apiRouter.use('/bookkeeping', bookkeepingMileageCompatRouter);
+apiRouter.use('/bookkeeping', bookkeepingLegacyWorkflowRouter);
 apiRouter.use('/bookkeeping', bookkeepingFrontendCompatRouter);
 apiRouter.use('/bookkeeping', bookkeepingCompletionRouter);
 apiRouter.use('/bookkeeping', bookkeepingRouter);
