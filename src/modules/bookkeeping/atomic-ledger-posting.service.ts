@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import type { z } from 'zod';
 import { pool } from '../../db/pool.js';
 import { HttpError } from '../../lib/http-error.js';
@@ -8,6 +9,7 @@ import { postExpenseSchema, postRevenueSchema } from './admin-ledger-record.sche
 
 type PostExpenseInput = z.infer<typeof postExpenseSchema>;
 type PostRevenueInput = z.infer<typeof postRevenueSchema>;
+type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
 
 type ExpenseRow = {
   id: string;
@@ -38,6 +40,12 @@ type RevenueRow = {
   status: 'draft' | 'posted' | 'void';
   created_at: Date;
   updated_at: Date;
+};
+
+type AccountRoleRow = {
+  account_type: AccountType;
+  name: string;
+  status: 'active' | 'inactive';
 };
 
 function mapExpense(row: ExpenseRow) {
@@ -75,6 +83,80 @@ function mapRevenue(row: RevenueRow) {
   };
 }
 
+async function getPostingAccount(
+  client: PoolClient,
+  legalEntityId: string,
+  accountId: string,
+  role: string
+): Promise<AccountRoleRow> {
+  const result = await client.query<AccountRoleRow>(
+    `SELECT account_type, name, status
+     FROM ledger_accounts
+     WHERE id = $1 AND legal_entity_id = $2`,
+    [accountId, legalEntityId]
+  );
+  const account = result.rows[0];
+  if (!account) {
+    throw new HttpError(400, 'INVALID_POSTING_ACCOUNT', `${role} account does not belong to this legal entity.`);
+  }
+  if (account.status !== 'active') {
+    throw new HttpError(409, 'INACTIVE_POSTING_ACCOUNT', `${role} account ${account.name} is inactive.`);
+  }
+  return account;
+}
+
+async function validateExpensePostingAccounts(
+  client: PoolClient,
+  legalEntityId: string,
+  expenseAccountId: string,
+  paymentAccountId: string
+) {
+  const [expenseAccount, paymentAccount] = await Promise.all([
+    getPostingAccount(client, legalEntityId, expenseAccountId, 'Expense'),
+    getPostingAccount(client, legalEntityId, paymentAccountId, 'Payment'),
+  ]);
+  if (expenseAccount.account_type !== 'expense') {
+    throw new HttpError(
+      400,
+      'INVALID_EXPENSE_ACCOUNT_TYPE',
+      `Expense account ${expenseAccount.name} must be an expense account.`
+    );
+  }
+  if (paymentAccount.account_type !== 'asset' && paymentAccount.account_type !== 'liability') {
+    throw new HttpError(
+      400,
+      'INVALID_PAYMENT_ACCOUNT_TYPE',
+      `Payment account ${paymentAccount.name} must be an asset or liability account.`
+    );
+  }
+}
+
+async function validateRevenuePostingAccounts(
+  client: PoolClient,
+  legalEntityId: string,
+  revenueAccountId: string,
+  depositAccountId: string
+) {
+  const [revenueAccount, depositAccount] = await Promise.all([
+    getPostingAccount(client, legalEntityId, revenueAccountId, 'Revenue'),
+    getPostingAccount(client, legalEntityId, depositAccountId, 'Deposit'),
+  ]);
+  if (revenueAccount.account_type !== 'revenue') {
+    throw new HttpError(
+      400,
+      'INVALID_REVENUE_ACCOUNT_TYPE',
+      `Revenue account ${revenueAccount.name} must be a revenue account.`
+    );
+  }
+  if (depositAccount.account_type !== 'asset') {
+    throw new HttpError(
+      400,
+      'INVALID_DEPOSIT_ACCOUNT_TYPE',
+      `Deposit account ${depositAccount.name} must be an asset account.`
+    );
+  }
+}
+
 export async function postExpenseAtomic(
   userId: string,
   businessUnitId: string,
@@ -105,6 +187,13 @@ export async function postExpenseAtomic(
     }
 
     legalEntityId = expense.legal_entity_id;
+    await validateExpensePostingAccounts(
+      client,
+      legalEntityId,
+      expense.expense_account_id,
+      expense.payment_account_id
+    );
+
     const journalResult = await client.query<{ id: string }>(
       `INSERT INTO journal_entries (
          legal_entity_id, business_unit_id, entry_number, entry_date, description,
@@ -195,6 +284,13 @@ export async function postRevenueAtomic(
     }
 
     legalEntityId = revenue.legal_entity_id;
+    await validateRevenuePostingAccounts(
+      client,
+      legalEntityId,
+      revenue.revenue_account_id,
+      revenue.deposit_account_id
+    );
+
     const journalResult = await client.query<{ id: string }>(
       `INSERT INTO journal_entries (
          legal_entity_id, business_unit_id, entry_number, entry_date, description,
