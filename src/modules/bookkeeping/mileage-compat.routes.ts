@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireRouteParam } from '../../lib/route-param.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { createMileageSchema, mileageListQuerySchema, mileageSummaryQuerySchema } from './completion.schemas.js';
 import {
@@ -7,6 +8,8 @@ import {
   createLegacyBookkeepingMileage,
   exportBookkeepingMileageCompat,
   listBookkeepingMileageCompat,
+  updateCanonicalBookkeepingMileage,
+  updateLegacyBookkeepingMileage,
 } from './mileage-compat.service.js';
 
 export const bookkeepingMileageCompatRouter = Router();
@@ -22,6 +25,17 @@ const legacyMileageSchema = z.object({
 }).strict().refine((value) => value.endOdometer > value.startOdometer, {
   message: 'Ending odometer must be greater than starting odometer.',
   path: ['endOdometer'],
+});
+
+const legacyMileagePatchSchema = z.object({
+  businessUnitId: z.string().uuid(),
+  date: z.string().date().optional(),
+  vehicle: z.string().trim().min(1).max(200).optional(),
+  purpose: z.string().trim().min(1).max(500).optional(),
+  startOdometer: z.coerce.number().nonnegative().optional(),
+  endOdometer: z.coerce.number().nonnegative().optional(),
+}).strict().refine((value) => Object.keys(value).some((key) => key !== 'businessUnitId'), {
+  message: 'At least one editable field is required.',
 });
 
 function csvEscape(value: unknown) {
@@ -57,6 +71,19 @@ bookkeepingMileageCompatRouter.post('/mileage', async (req, res) => {
     : await createLegacyBookkeepingMileage(req.auth!.userId, legacyMileageSchema.parse(raw));
 
   res.status(201).json({ data });
+});
+
+bookkeepingMileageCompatRouter.patch('/mileage/:mileageId', async (req, res) => {
+  const mileageId = requireRouteParam(req, 'mileageId');
+  const raw = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  const isLegacy = Object.prototype.hasOwnProperty.call(raw, 'date')
+    || Object.prototype.hasOwnProperty.call(raw, 'vehicle');
+  const data = isLegacy
+    ? await updateLegacyBookkeepingMileage(req.auth!.userId, mileageId, legacyMileagePatchSchema.parse(raw))
+    : await updateCanonicalBookkeepingMileage(req.auth!.userId, mileageId, raw);
+  res.json({ data });
 });
 
 bookkeepingMileageCompatRouter.get('/mileage/export.csv', async (req, res) => {
