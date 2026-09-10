@@ -5,12 +5,14 @@ import {
   accountingPeriodListQuerySchema,
   closeAccountingPeriodSchema,
   createAccountingPeriodSchema,
+  updateAccountingPeriodSchema,
 } from './accounting-period.schemas.js';
 import {
   closeAccountingPeriod,
   createAccountingPeriod,
   listAccountingPeriods,
   reopenAccountingPeriod,
+  updateAccountingPeriod,
 } from './accounting-period.service.js';
 
 export const accountingPeriodRouter = Router({ mergeParams: true });
@@ -32,6 +34,19 @@ accountingPeriodRouter.post('/', requireAuth, async (req, res) => {
     createAccountingPeriodSchema.parse(req.body)
   );
   res.status(201).json({ data });
+});
+
+accountingPeriodRouter.patch('/:periodId', requireAuth, async (req, res) => {
+  const businessUnitId = requireRouteParam(req, 'businessUnitId');
+  const periodId = requireRouteParam(req, 'periodId');
+  res.json({
+    data: await updateAccountingPeriod(
+      req.auth!.userId,
+      periodId,
+      updateAccountingPeriodSchema.parse(req.body),
+      businessUnitId
+    ),
+  });
 });
 
 accountingPeriodRouter.post('/:periodId/close', requireAuth, async (req, res) => {
