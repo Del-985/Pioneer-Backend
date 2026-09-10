@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireRouteParam } from '../../lib/route-param.js';
 import { customerAuthRouter } from './customer-auth.routes.js';
 import { listCustomerBookings } from './customer-booking-status.service.js';
+import { listCustomerAvailability } from './customer-availability.service.js';
 import { requireCustomerAuth } from './customer-portal.middleware.js';
 import {
   customerBookingCreateSchema,
@@ -13,20 +14,21 @@ import {
 } from './customer-portal.schemas.js';
 import {
   archiveCustomerProperty,
-  cancelCustomerServiceRequest,
   createCustomerBooking,
   createCustomerProperty,
-  createCustomerServiceRequest,
   getCustomerBilling,
   getCustomerInvoice,
   getCustomerProfile,
-  listCustomerAvailability,
   listCustomerProperties,
   listCustomerSchedule,
-  listCustomerServiceRequests,
   updateCustomerProfile,
   updateCustomerProperty,
 } from './customer-portal.service.js';
+import {
+  cancelCustomerServiceRequest,
+  createCustomerServiceRequest,
+  listCustomerServiceRequests,
+} from './customer-service-requests.service.js';
 import { toCustomerServiceRequestStatus } from './customer-service-request-status.js';
 
 export const customerPortalRouter = Router();
