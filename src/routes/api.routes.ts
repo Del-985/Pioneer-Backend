@@ -17,6 +17,7 @@ import { bookkeepingTransactionRouter } from '../modules/bookkeeping/transaction
 import { bookkeepingVehicleRouter } from '../modules/bookkeeping/bookkeeping-vehicle.routes.js';
 import { adminBusinessUnitRouter } from '../modules/business-units/admin-business-unit.routes.js';
 import { businessUnitRouter } from '../modules/business-units/business-unit.routes.js';
+import { customerPortalRouter } from '../modules/customer-portal/customer-portal.routes.js';
 import { healthRouter } from '../modules/health/health.routes.js';
 import { adminIntegrationRouter } from '../modules/integrations/admin-integration.routes.js';
 import { adminIntercompanyRouter } from '../modules/intercompany/admin-intercompany.routes.js';
@@ -31,6 +32,7 @@ export const apiRouter = Router();
 
 apiRouter.use('/health', healthRouter);
 apiRouter.use('/auth', authRouter);
+apiRouter.use('/customer', customerPortalRouter);
 apiRouter.use('/business-units', businessUnitRouter);
 apiRouter.use('/bookkeeping/transactions', bookkeepingSpecialTransactionRouter);
 apiRouter.use('/bookkeeping/transactions', bookkeepingTransactionListRouter);

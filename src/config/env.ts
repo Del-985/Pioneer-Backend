@@ -10,6 +10,7 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   SESSION_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(168),
   SESSION_COOKIE_NAME: z.string().trim().min(1).max(100).default('pioneer_session'),
+  CUSTOMER_SESSION_COOKIE_NAME: z.string().trim().min(1).max(100).default('pioneer_customer_session'),
   SESSION_COOKIE_DOMAIN: z.string().trim().min(1).optional(),
   BOOTSTRAP_ADMIN_EMAIL: z.string().trim().email().optional(),
   BOOTSTRAP_ADMIN_NAME: z.string().trim().min(1).max(120).optional(),
@@ -61,6 +62,7 @@ const builtInCorsOrigins = [
   'https://www.pioneerlegacyworks.com',
   'https://pioneeroutdoorservices.com',
   'https://www.pioneeroutdoorservices.com',
+  'https://customers.pioneeroutdoorservices.com',
   'https://del-985.github.io',
 ];
 

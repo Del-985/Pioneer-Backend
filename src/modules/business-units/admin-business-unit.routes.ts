@@ -4,6 +4,7 @@ import { requireRouteParam } from '../../lib/route-param.js';
 import { adminBookkeepingRouter } from '../bookkeeping/admin-bookkeeping.routes.js';
 import { adminLedgerRecordRouter } from '../bookkeeping/admin-ledger-record.routes.js';
 import { adminContactRouter } from '../contacts/admin-contact.routes.js';
+import { adminCustomerPortalRouter } from '../customer-portal/admin-customer-portal.routes.js';
 import { adminCustomerRouter } from '../customers/admin-customer.routes.js';
 import { adminEmployeeRouter } from '../employees/admin-employee.routes.js';
 import { adminEstimateRouter } from '../estimates/admin-estimate.routes.js';
@@ -53,6 +54,7 @@ adminBusinessUnitRouter.get('/:businessUnitId/site', requireAuth, async (req, re
 
 adminBusinessUnitRouter.use('/:businessUnitId/contacts', adminContactRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/customers', adminCustomerRouter);
+adminBusinessUnitRouter.use('/:businessUnitId/customer-portal', adminCustomerPortalRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/files', adminFileRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/forms', adminFormRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/schedule', adminScheduleRouter);
