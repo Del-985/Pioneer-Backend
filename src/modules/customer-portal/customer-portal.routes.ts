@@ -27,8 +27,17 @@ import {
   updateCustomerProfile,
   updateCustomerProperty,
 } from './customer-portal.service.js';
+import { toCustomerServiceRequestStatus } from './customer-service-request-status.js';
 
 export const customerPortalRouter = Router();
+
+function presentServiceRequest<T extends { status: string }>(request: T) {
+  return {
+    ...request,
+    workflowStatus: request.status,
+    status: toCustomerServiceRequestStatus(request.status),
+  };
+}
 
 customerPortalRouter.use('/auth', customerAuthRouter);
 customerPortalRouter.use(requireCustomerAuth);
@@ -84,17 +93,20 @@ customerPortalRouter.post('/schedule/bookings', async (req, res) => {
 });
 
 customerPortalRouter.get('/requests', async (req, res) => {
-  res.json({ data: { requests: await listCustomerServiceRequests(req.customerAuth!) } });
+  const requests = await listCustomerServiceRequests(req.customerAuth!);
+  res.json({ data: { requests: requests.map(presentServiceRequest) } });
 });
 
 customerPortalRouter.post('/requests', async (req, res) => {
   const input = customerServiceRequestCreateSchema.parse(req.body);
-  res.status(201).json({ data: await createCustomerServiceRequest(req.customerAuth!, input) });
+  const request = await createCustomerServiceRequest(req.customerAuth!, input);
+  res.status(201).json({ data: presentServiceRequest(request) });
 });
 
 customerPortalRouter.patch('/requests/:requestId/cancel', async (req, res) => {
   const requestId = requireRouteParam(req, 'requestId');
-  res.json({ data: await cancelCustomerServiceRequest(req.customerAuth!, requestId) });
+  const request = await cancelCustomerServiceRequest(req.customerAuth!, requestId);
+  res.json({ data: presentServiceRequest(request) });
 });
 
 customerPortalRouter.get('/billing', async (req, res) => {
