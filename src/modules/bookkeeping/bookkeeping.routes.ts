@@ -6,12 +6,14 @@ import {
   accountingPeriodListQuerySchema,
   closeAccountingPeriodSchema,
   createAccountingPeriodSchema,
+  updateAccountingPeriodSchema,
 } from './accounting-period.schemas.js';
 import {
   closeAccountingPeriod,
   createAccountingPeriod,
   listAccountingPeriods,
   reopenAccountingPeriod,
+  updateAccountingPeriod,
 } from './accounting-period.service.js';
 import {
   accountRegisterQuerySchema,
@@ -155,6 +157,19 @@ bookkeepingRouter.post('/periods', async (req, res) => {
     createAccountingPeriodSchema.parse(payload)
   );
   res.status(201).json({ data });
+});
+
+bookkeepingRouter.patch('/periods/:periodId', async (req, res) => {
+  const { businessUnitId, payload } = bodyContext(req.body);
+  const periodId = requireRouteParam(req, 'periodId');
+  res.json({
+    data: await updateAccountingPeriod(
+      req.auth!.userId,
+      periodId,
+      updateAccountingPeriodSchema.parse(payload),
+      businessUnitId
+    ),
+  });
 });
 
 bookkeepingRouter.post('/periods/:periodId/close', async (req, res) => {
