@@ -19,22 +19,43 @@ function csvEscape(value: unknown) {
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
+function accountLabel(row: Record<string, any> | undefined) {
+  if (!row) return '';
+  const code = typeof row.code === 'string' ? row.code.trim() : '';
+  const name = typeof row.name === 'string' ? row.name.trim() : '';
+  if (code && name) return `${code} · ${name}`;
+  return name || code;
+}
+
 function sendProfitLossCsv(res: Response, report: Record<string, any>) {
   const rows = Array.isArray(report.data) ? report.data as Array<Record<string, any>> : [];
+  const byId = new Map(rows
+    .filter((row) => typeof row.accountId === 'string')
+    .map((row) => [row.accountId as string, row]));
+
   const headers = [
-    'code',
-    'name',
-    'accountType',
-    'parentAccountId',
-    'directAmountCents',
-    'amountCents',
-    'directCompareAmountCents',
-    'compareAmountCents',
+    'Account',
+    'Account Type',
+    'Parent Account',
+    'Direct Amount (cents)',
+    'Total Amount (cents)',
+    'Direct Comparison Amount (cents)',
+    'Comparison Amount (cents)',
   ];
+
   const body = [
-    headers.join(','),
-    ...rows.map((row) => headers.map((header) => csvEscape(row[header])).join(',')),
+    headers.map(csvEscape).join(','),
+    ...rows.map((row) => [
+      accountLabel(row),
+      row.accountType,
+      typeof row.parentAccountId === 'string' ? accountLabel(byId.get(row.parentAccountId)) : '',
+      row.directAmountCents,
+      row.amountCents,
+      row.directCompareAmountCents,
+      row.compareAmountCents,
+    ].map(csvEscape).join(',')),
   ].join('\n');
+
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="profit-loss.csv"');
   res.send(body);
