@@ -12,10 +12,12 @@ import {
   accountingPeriodListQuerySchema,
   closeAccountingPeriodSchema,
   createAccountingPeriodSchema,
+  updateAccountingPeriodSchema,
 } from './accounting-period.schemas.js';
 
 type ListQuery = z.infer<typeof accountingPeriodListQuerySchema>;
 type CreateInput = z.infer<typeof createAccountingPeriodSchema>;
+type UpdateInput = z.infer<typeof updateAccountingPeriodSchema>;
 type CloseInput = z.infer<typeof closeAccountingPeriodSchema>;
 
 type PeriodRow = {
@@ -203,6 +205,104 @@ export async function createAccountingPeriod(
       name: row.name,
       startDate: row.start_date,
       endDate: row.end_date,
+    },
+  });
+
+  return mapPeriod(row);
+}
+
+export async function updateAccountingPeriod(
+  userId: string,
+  periodId: string,
+  input: UpdateInput,
+  selectedBusinessUnitId?: string
+) {
+  const current = await getPeriodRow(periodId);
+  await assertSelectedBusinessMatchesPeriod(selectedBusinessUnitId, current.legal_entity_id);
+  await assertBookkeepingLegalEntity(userId, current.legal_entity_id, 'bookkeeping.close');
+
+  if (current.status !== 'open') {
+    throw new HttpError(
+      409,
+      'ACCOUNTING_PERIOD_NOT_OPEN',
+      'Only open accounting periods can be edited. Reopen the period before correcting it.'
+    );
+  }
+
+  const name = input.name ?? current.name;
+  const startDate = input.startDate ?? current.start_date;
+  const endDate = input.endDate ?? current.end_date;
+
+  if (endDate < startDate) {
+    throw new HttpError(
+      400,
+      'ACCOUNTING_PERIOD_INVALID_RANGE',
+      'Accounting period end date must not be before its start date.'
+    );
+  }
+
+  const overlap = await pool.query(
+    `SELECT 1
+     FROM accounting_periods
+     WHERE legal_entity_id = $1
+       AND id <> $4
+       AND daterange(start_date, end_date, '[]') && daterange($2::date, $3::date, '[]')
+     LIMIT 1`,
+    [current.legal_entity_id, startDate, endDate, periodId]
+  );
+  if (overlap.rows[0]) {
+    throw new HttpError(
+      409,
+      'ACCOUNTING_PERIOD_OVERLAP',
+      'Accounting periods may not overlap within a legal entity.'
+    );
+  }
+
+  const result = await pool.query<PeriodRow>(
+    `UPDATE accounting_periods
+     SET name = $2,
+         start_date = $3,
+         end_date = $4
+     WHERE id = $1
+     RETURNING
+       id,
+       legal_entity_id,
+       name,
+       start_date::text,
+       end_date::text,
+       status,
+       closed_at,
+       closed_by_user_id,
+       reopened_at,
+       reopened_by_user_id,
+       created_by_user_id,
+       created_at,
+       updated_at`,
+    [periodId, name, startDate, endDate]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new HttpError(500, 'ACCOUNTING_PERIOD_UPDATE_FAILED', 'Accounting period could not be updated.');
+  }
+
+  await writeAuditEvent({
+    actorUserId: userId,
+    legalEntityId: current.legal_entity_id,
+    action: 'bookkeeping.period.updated',
+    resourceType: 'accounting_period',
+    resourceId: periodId,
+    metadata: {
+      before: {
+        name: current.name,
+        startDate: current.start_date,
+        endDate: current.end_date,
+      },
+      after: {
+        name: row.name,
+        startDate: row.start_date,
+        endDate: row.end_date,
+      },
     },
   });
 
