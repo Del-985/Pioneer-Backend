@@ -11,7 +11,12 @@ async function start(): Promise<void> {
     logger.info({ port: env.PORT }, 'Pioneer Backend listening');
   });
 
-  const emailDeliveryEnabled = Boolean(env.SMTP_HOST && env.SMTP_FROM);
+  const emailDeliveryEnabled = Boolean(
+    env.SMTP_HOST &&
+    env.SMTP_FROM &&
+    env.SMTP_USER &&
+    env.SMTP_PASSWORD
+  );
   let notificationRunInFlight = false;
 
   const processNotificationBatch = async (): Promise<void> => {
@@ -32,7 +37,7 @@ async function start(): Promise<void> {
   if (emailDeliveryEnabled) {
     void processNotificationBatch();
   } else {
-    logger.warn('SMTP is not configured; email notifications will remain queued until SMTP is configured.');
+    logger.warn('Authenticated SMTP is not configured; email notifications will remain queued until SMTP_HOST, SMTP_FROM, SMTP_USER, and SMTP_PASSWORD are configured.');
   }
 
   const notificationTimer = setInterval(() => void processNotificationBatch(), 30_000);
