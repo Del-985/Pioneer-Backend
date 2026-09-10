@@ -2,11 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   adminBookingSlotCreateSchema,
+  adminServiceRequestUpdateSchema,
   customerBookingCreateSchema,
   customerRegisterSchema,
   customerScheduleQuerySchema,
   customerServiceRequestCreateSchema,
 } from '../src/modules/customer-portal/customer-portal.schemas.js';
+import {
+  canTransitionServiceRequest,
+  toCustomerServiceRequestStatus,
+} from '../src/modules/customer-portal/customer-service-request-status.js';
 
 test('customer registration enforces portal identity requirements', () => {
   const parsed = customerRegisterSchema.parse({
@@ -57,9 +62,34 @@ test('admin availability requires a valid time range', () => {
 
 test('admin availability cannot be published in the past', () => {
   const pastStart = new Date(Date.now() - 2 * 60 * 60 * 1000);
-  const pastEnd = new Date(Date.now() - 60 * 60 * 1000);
+  const pastEnd = new Date(Date.now() - 60 * 60 * 60 * 1000);
   assert.throws(() => adminBookingSlotCreateSchema.parse({
     startsAt: pastStart.toISOString(),
     endsAt: pastEnd.toISOString(),
   }));
+});
+
+test('service request updates support explicit accept and deny decisions', () => {
+  assert.equal(adminServiceRequestUpdateSchema.parse({ status: 'accepted' }).status, 'accepted');
+  assert.equal(adminServiceRequestUpdateSchema.parse({ status: 'denied' }).status, 'denied');
+  assert.throws(() => adminServiceRequestUpdateSchema.parse({ status: 'approved' }));
+});
+
+test('service request workflow maps to stable customer-facing statuses', () => {
+  assert.equal(toCustomerServiceRequestStatus('new'), 'pending');
+  assert.equal(toCustomerServiceRequestStatus('in_review'), 'pending');
+  assert.equal(toCustomerServiceRequestStatus('accepted'), 'accepted');
+  assert.equal(toCustomerServiceRequestStatus('scheduled'), 'accepted');
+  assert.equal(toCustomerServiceRequestStatus('completed'), 'accepted');
+  assert.equal(toCustomerServiceRequestStatus('denied'), 'denied');
+  assert.equal(toCustomerServiceRequestStatus('cancelled'), 'cancelled');
+});
+
+test('service request decisions follow a controlled lifecycle', () => {
+  assert.equal(canTransitionServiceRequest('new', 'accepted'), true);
+  assert.equal(canTransitionServiceRequest('in_review', 'denied'), true);
+  assert.equal(canTransitionServiceRequest('accepted', 'scheduled'), true);
+  assert.equal(canTransitionServiceRequest('scheduled', 'completed'), true);
+  assert.equal(canTransitionServiceRequest('denied', 'accepted'), false);
+  assert.equal(canTransitionServiceRequest('completed', 'in_review'), false);
 });
