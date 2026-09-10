@@ -51,6 +51,35 @@ test('customer booking and service request accept supported service types', () =
   }).serviceType, 'salting');
 });
 
+test('customer service requests accept a future requested time', () => {
+  const requestedAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const parsed = customerServiceRequestCreateSchema.parse({
+    serviceType: 'snow-removal',
+    subject: 'Clear driveway',
+    description: 'Please clear the driveway.',
+    requestedAt,
+  });
+  assert.equal(parsed.requestedAt, requestedAt);
+});
+
+test('availability-backed service requests require a requested time', () => {
+  assert.throws(() => customerServiceRequestCreateSchema.parse({
+    serviceType: 'snow-removal',
+    subject: 'Clear driveway',
+    description: 'Please clear the driveway.',
+    availabilitySlotId: '00000000-0000-4000-8000-000000000001',
+  }));
+});
+
+test('customer service requests reject requested times in the past', () => {
+  assert.throws(() => customerServiceRequestCreateSchema.parse({
+    serviceType: 'snow-removal',
+    subject: 'Clear driveway',
+    description: 'Please clear the driveway.',
+    requestedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+  }));
+});
+
 test('admin availability requires a valid time range', () => {
   const futureStart = new Date(Date.now() + 2 * 60 * 60 * 1000);
   const futureEnd = new Date(Date.now() + 60 * 60 * 1000);
