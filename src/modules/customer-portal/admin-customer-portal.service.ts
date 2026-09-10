@@ -3,6 +3,11 @@ import { pool } from '../../db/pool.js';
 import { HttpError } from '../../lib/http-error.js';
 import { assertBusinessUnitPermission } from '../access/authorization.service.js';
 import { writeAuditEvent } from '../audit/admin-audit.service.js';
+import {
+  canTransitionServiceRequest,
+  toCustomerServiceRequestStatus,
+  type ServiceRequestWorkflowStatus,
+} from './customer-service-request-status.js';
 import type {
   adminServiceRequestListQuerySchema,
   adminServiceRequestUpdateSchema,
@@ -35,7 +40,7 @@ type RequestRow = {
   service_type: string;
   subject: string;
   description: string;
-  status: 'new' | 'in_review' | 'scheduled' | 'completed' | 'cancelled';
+  status: ServiceRequestWorkflowStatus;
   created_at: Date;
   updated_at: Date;
 };
@@ -113,6 +118,7 @@ function mapRequest(row: RequestRow) {
     subject: row.subject,
     description: row.description,
     status: row.status,
+    customerStatus: toCustomerServiceRequestStatus(row.status),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -125,38 +131,75 @@ export async function updateAdminCustomerServiceRequest(
   input: RequestUpdate
 ) {
   await assertBusinessUnitPermission(userId, businessUnitId, 'customers.write');
-  const updateResult = await pool.query<{ id: string }>(
-    `UPDATE customer_service_requests
-     SET status = $3
-     WHERE id = $1 AND business_unit_id = $2
-     RETURNING id`,
-    [requestId, businessUnitId, input.status]
-  );
-  if (!updateResult.rows[0]) {
-    throw new HttpError(404, 'SERVICE_REQUEST_NOT_FOUND', 'The service request does not exist.');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existingResult = await client.query<RequestRow>(
+      `SELECT
+         r.id, r.customer_id, c.display_name AS customer_name,
+         r.property_id, a.label AS property_label,
+         r.service_type, r.subject, r.description, r.status, r.created_at, r.updated_at
+       FROM customer_service_requests r
+       JOIN customers c ON c.id = r.customer_id
+       LEFT JOIN customer_addresses a ON a.id = r.property_id
+       WHERE r.id = $1 AND r.business_unit_id = $2
+       FOR UPDATE OF r`,
+      [requestId, businessUnitId]
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) {
+      throw new HttpError(404, 'SERVICE_REQUEST_NOT_FOUND', 'The service request does not exist.');
+    }
+
+    if (!canTransitionServiceRequest(existing.status, input.status)) {
+      throw new HttpError(
+        409,
+        'INVALID_SERVICE_REQUEST_TRANSITION',
+        `A service request cannot move from ${existing.status} to ${input.status}.`
+      );
+    }
+
+    const updateResult = await client.query<RequestRow>(
+      `UPDATE customer_service_requests r
+       SET status = $3
+       FROM customers c
+       LEFT JOIN customer_addresses a ON a.id = r.property_id
+       WHERE r.id = $1
+         AND r.business_unit_id = $2
+         AND c.id = r.customer_id
+       RETURNING
+         r.id, r.customer_id, c.display_name AS customer_name,
+         r.property_id, a.label AS property_label,
+         r.service_type, r.subject, r.description, r.status, r.created_at, r.updated_at`,
+      [requestId, businessUnitId, input.status]
+    );
+    const updated = updateResult.rows[0];
+    if (!updated) {
+      throw new HttpError(404, 'SERVICE_REQUEST_NOT_FOUND', 'The service request does not exist.');
+    }
+
+    await client.query('COMMIT');
+
+    await writeAuditEvent({
+      actorUserId: userId,
+      businessUnitId,
+      action: 'customer_portal.service_request_updated',
+      resourceType: 'customer_service_request',
+      resourceId: requestId,
+      metadata: {
+        from: existing.status,
+        to: input.status,
+        customerStatus: toCustomerServiceRequestStatus(input.status),
+      },
+    });
+
+    return mapRequest(updated);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
-
-  const result = await pool.query<RequestRow>(
-    `SELECT
-       r.id, r.customer_id, c.display_name AS customer_name,
-       r.property_id, a.label AS property_label,
-       r.service_type, r.subject, r.description, r.status, r.created_at, r.updated_at
-     FROM customer_service_requests r
-     JOIN customers c ON c.id = r.customer_id
-     LEFT JOIN customer_addresses a ON a.id = r.property_id
-     WHERE r.id = $1 AND r.business_unit_id = $2`,
-    [requestId, businessUnitId]
-  );
-  const row = result.rows[0]!;
-
-  await writeAuditEvent({
-    actorUserId: userId,
-    businessUnitId,
-    action: 'customer_portal.service_request_updated',
-    resourceType: 'customer_service_request',
-    resourceId: requestId,
-    metadata: { status: input.status },
-  });
-
-  return mapRequest(row);
 }
