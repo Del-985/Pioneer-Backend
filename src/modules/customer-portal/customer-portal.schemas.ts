@@ -76,6 +76,24 @@ export const customerServiceRequestCreateSchema = z.object({
   serviceType: serviceTypeSchema,
   subject: z.string().trim().min(1).max(160),
   description: z.string().trim().min(1).max(5000),
+  requestedAt: z.string().datetime({ offset: true }).optional(),
+  availabilitySlotId: z.string().uuid().nullable().optional(),
+}).superRefine((value, context) => {
+  if (value.requestedAt && new Date(value.requestedAt) <= new Date()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'The requested service time must be in the future.',
+      path: ['requestedAt'],
+    });
+  }
+
+  if (value.availabilitySlotId && !value.requestedAt) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'A requested service time is required when choosing an availability slot.',
+      path: ['requestedAt'],
+    });
+  }
 });
 
 export const adminBookingSlotCreateSchema = z.object({
