@@ -14,6 +14,14 @@ export const createAccountingPeriodSchema = z.object({
   path: ['endDate'],
 });
 
+export const updateAccountingPeriodSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  startDate: z.string().date().optional(),
+  endDate: z.string().date().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+  message: 'At least one field is required.',
+});
+
 export const closeAccountingPeriodSchema = z.object({
   lock: z.boolean().default(false),
 });
