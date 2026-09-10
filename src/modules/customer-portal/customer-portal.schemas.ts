@@ -128,12 +128,12 @@ export const adminBookingUpdateSchema = z.object({
 });
 
 export const adminServiceRequestListQuerySchema = z.object({
-  status: z.enum(['new', 'in_review', 'scheduled', 'completed', 'cancelled']).optional(),
+  status: z.enum(['new', 'in_review', 'accepted', 'denied', 'scheduled', 'completed', 'cancelled']).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
 });
 
 export const adminServiceRequestUpdateSchema = z.object({
-  status: z.enum(['new', 'in_review', 'scheduled', 'completed', 'cancelled']),
+  status: z.enum(['new', 'in_review', 'accepted', 'denied', 'scheduled', 'completed', 'cancelled']),
 });
 
 export type CustomerServiceType = z.infer<typeof serviceTypeSchema>;
