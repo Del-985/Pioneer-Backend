@@ -84,9 +84,25 @@ export const adminBookingSlotCreateSchema = z.object({
   capacity: z.number().int().min(1).max(100).default(1),
   serviceTypes: z.array(serviceTypeSchema).max(20).default([]),
   metadata: z.record(z.unknown()).default({}),
-}).refine((value) => new Date(value.endsAt) > new Date(value.startsAt), {
-  message: 'The slot end must be after the start.',
-  path: ['endsAt'],
+}).superRefine((value, context) => {
+  const startsAt = new Date(value.startsAt);
+  const endsAt = new Date(value.endsAt);
+
+  if (endsAt <= startsAt) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'The slot end must be after the start.',
+      path: ['endsAt'],
+    });
+  }
+
+  if (startsAt <= new Date()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Customer availability must start in the future.',
+      path: ['startsAt'],
+    });
+  }
 });
 
 export const adminBookingSlotUpdateSchema = z.object({
