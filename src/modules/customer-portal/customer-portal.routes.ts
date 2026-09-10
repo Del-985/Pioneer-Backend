@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireRouteParam } from '../../lib/route-param.js';
 import { customerAuthRouter } from './customer-auth.routes.js';
+import { listCustomerBookings } from './customer-booking-status.service.js';
 import { requireCustomerAuth } from './customer-portal.middleware.js';
 import {
   customerBookingCreateSchema,
@@ -70,6 +71,11 @@ customerPortalRouter.get('/schedule', async (req, res) => {
 customerPortalRouter.get('/schedule/availability', async (req, res) => {
   const query = customerScheduleQuerySchema.parse(req.query);
   res.json({ data: { slots: await listCustomerAvailability(req.customerAuth!, query) } });
+});
+
+customerPortalRouter.get('/schedule/bookings', async (req, res) => {
+  const query = customerScheduleQuerySchema.parse(req.query);
+  res.json({ data: { bookings: await listCustomerBookings(req.customerAuth!, query) } });
 });
 
 customerPortalRouter.post('/schedule/bookings', async (req, res) => {
