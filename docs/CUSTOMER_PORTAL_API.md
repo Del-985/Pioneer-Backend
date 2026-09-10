@@ -30,6 +30,19 @@ The production customer cookie is HTTP-only, Secure, SameSite=None, and partitio
 
 Billing is read-only until a payment processor is explicitly integrated. Existing admin invoice/payment workflows remain unchanged.
 
+### Service request statuses
+
+Customer-facing service requests expose a simplified `status` that represents the business decision:
+
+- `pending` — the internal workflow is `new` or `in_review`.
+- `accepted` — the request has been accepted; internal workflow may be `accepted`, `scheduled`, or `completed`.
+- `denied` — the business denied the request.
+- `cancelled` — the customer or business cancelled the request before completion.
+
+Responses also include `workflowStatus` so internal workflow detail remains available without leaking it into the primary customer-facing status.
+
+New service requests begin as `pending`. Customers may cancel requests while the internal status is `new` or `in_review`. Once accepted, denied, scheduled, or completed, the request cannot be customer-cancelled through the self-service cancellation endpoint.
+
 ## Admin customer-portal operations
 
 Routes are mounted beneath `/api/admin/business-units/:businessUnitId/customer-portal` and use the existing staff authentication and business-unit permissions.
@@ -41,6 +54,8 @@ Routes are mounted beneath `/api/admin/business-units/:businessUnitId/customer-p
 - `PATCH /bookings/:bookingId`
 - `GET /requests`
 - `PATCH /requests/:requestId`
+
+Admin service-request workflow states are `new`, `in_review`, `accepted`, `denied`, `scheduled`, `completed`, and `cancelled`. The backend enforces valid transitions. Typical paths are `new → accepted → scheduled → completed` or `new/in_review → denied`.
 
 Confirming a customer booking creates the corresponding `schedule_entries` record. Cancelling or completing a confirmed booking updates that schedule entry as well.
 
