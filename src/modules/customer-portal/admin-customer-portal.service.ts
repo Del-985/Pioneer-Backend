@@ -41,6 +41,8 @@ type RequestRow = {
   subject: string;
   description: string;
   status: ServiceRequestWorkflowStatus;
+  requested_at: Date | null;
+  availability_slot_id: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -49,7 +51,8 @@ const requestSelect = `
   SELECT
     r.id, r.customer_id, c.display_name AS customer_name,
     r.property_id, a.label AS property_label,
-    r.service_type, r.subject, r.description, r.status, r.created_at, r.updated_at
+    r.service_type, r.subject, r.description, r.status,
+    r.requested_at, r.availability_slot_id, r.created_at, r.updated_at
   FROM customer_service_requests r
   JOIN customers c ON c.id = r.customer_id
   LEFT JOIN customer_addresses a ON a.id = r.property_id
@@ -65,15 +68,20 @@ export async function listAdminBookingSlots(
     `SELECT
        s.id, s.starts_at, s.ends_at, s.capacity, s.service_types, s.status,
        s.metadata, s.created_at, s.updated_at,
-       COUNT(b.id)::int AS booked_count
+       (
+         SELECT COUNT(*)::int
+         FROM customer_bookings b
+         WHERE b.slot_id = s.id AND b.status IN ('requested', 'confirmed')
+       ) + (
+         SELECT COUNT(*)::int
+         FROM customer_service_requests r
+         WHERE r.availability_slot_id = s.id
+           AND r.status IN ('new', 'in_review', 'accepted', 'scheduled')
+       ) AS booked_count
      FROM customer_booking_slots s
-     LEFT JOIN customer_bookings b
-       ON b.slot_id = s.id
-      AND b.status IN ('requested', 'confirmed')
      WHERE s.business_unit_id = $1
        AND s.starts_at >= $2
        AND s.starts_at < $3
-     GROUP BY s.id
      ORDER BY s.starts_at ASC`,
     [businessUnitId, query.from, query.to]
   );
@@ -123,6 +131,8 @@ function mapRequest(row: RequestRow) {
     description: row.description,
     status: row.status,
     customerStatus: toCustomerServiceRequestStatus(row.status),
+    requestedAt: row.requested_at,
+    availabilitySlotId: row.availability_slot_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -188,6 +198,8 @@ export async function updateAdminCustomerServiceRequest(
         from: existing.status,
         to: input.status,
         customerStatus: toCustomerServiceRequestStatus(input.status),
+        requestedAt: updated.requested_at,
+        availabilitySlotId: updated.availability_slot_id,
       },
     });
 
