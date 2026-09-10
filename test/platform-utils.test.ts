@@ -6,6 +6,8 @@ import { mapDatabaseError } from '../src/lib/pg-error.js';
 test('pagination parser applies bounded defaults', () => {
   assert.deepEqual(paginationQuerySchema.parse({}), { limit: 50, offset: 0 });
   assert.deepEqual(paginationQuerySchema.parse({ limit: '25', offset: '10' }), { limit: 25, offset: 10 });
+  assert.deepEqual(paginationQuerySchema.parse({ limit: '500', offset: '0' }), { limit: 500, offset: 0 });
+  assert.equal(paginationQuerySchema.safeParse({ limit: '501', offset: '0' }).success, false);
   assert.deepEqual(paginationMeta({ limit: 25, offset: 10 }, 25), {
     limit: 25,
     offset: 10,
