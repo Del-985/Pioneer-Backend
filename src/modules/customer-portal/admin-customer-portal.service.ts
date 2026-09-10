@@ -45,6 +45,16 @@ type RequestRow = {
   updated_at: Date;
 };
 
+const requestSelect = `
+  SELECT
+    r.id, r.customer_id, c.display_name AS customer_name,
+    r.property_id, a.label AS property_label,
+    r.service_type, r.subject, r.description, r.status, r.created_at, r.updated_at
+  FROM customer_service_requests r
+  JOIN customers c ON c.id = r.customer_id
+  LEFT JOIN customer_addresses a ON a.id = r.property_id
+`;
+
 export async function listAdminBookingSlots(
   userId: string,
   businessUnitId: string,
@@ -90,13 +100,7 @@ export async function listAdminCustomerServiceRequests(
 ) {
   await assertBusinessUnitPermission(userId, businessUnitId, 'customers.read');
   const result = await pool.query<RequestRow>(
-    `SELECT
-       r.id, r.customer_id, c.display_name AS customer_name,
-       r.property_id, a.label AS property_label,
-       r.service_type, r.subject, r.description, r.status, r.created_at, r.updated_at
-     FROM customer_service_requests r
-     JOIN customers c ON c.id = r.customer_id
-     LEFT JOIN customer_addresses a ON a.id = r.property_id
+    `${requestSelect}
      WHERE r.business_unit_id = $1
        AND ($2::text IS NULL OR r.status = $2)
      ORDER BY r.created_at DESC
@@ -137,13 +141,7 @@ export async function updateAdminCustomerServiceRequest(
     await client.query('BEGIN');
 
     const existingResult = await client.query<RequestRow>(
-      `SELECT
-         r.id, r.customer_id, c.display_name AS customer_name,
-         r.property_id, a.label AS property_label,
-         r.service_type, r.subject, r.description, r.status, r.created_at, r.updated_at
-       FROM customer_service_requests r
-       JOIN customers c ON c.id = r.customer_id
-       LEFT JOIN customer_addresses a ON a.id = r.property_id
+      `${requestSelect}
        WHERE r.id = $1 AND r.business_unit_id = $2
        FOR UPDATE OF r`,
       [requestId, businessUnitId]
@@ -161,21 +159,19 @@ export async function updateAdminCustomerServiceRequest(
       );
     }
 
-    const updateResult = await client.query<RequestRow>(
-      `UPDATE customer_service_requests r
+    await client.query(
+      `UPDATE customer_service_requests
        SET status = $3
-       FROM customers c
-       LEFT JOIN customer_addresses a ON a.id = r.property_id
-       WHERE r.id = $1
-         AND r.business_unit_id = $2
-         AND c.id = r.customer_id
-       RETURNING
-         r.id, r.customer_id, c.display_name AS customer_name,
-         r.property_id, a.label AS property_label,
-         r.service_type, r.subject, r.description, r.status, r.created_at, r.updated_at`,
+       WHERE id = $1 AND business_unit_id = $2`,
       [requestId, businessUnitId, input.status]
     );
-    const updated = updateResult.rows[0];
+
+    const updatedResult = await client.query<RequestRow>(
+      `${requestSelect}
+       WHERE r.id = $1 AND r.business_unit_id = $2`,
+      [requestId, businessUnitId]
+    );
+    const updated = updatedResult.rows[0];
     if (!updated) {
       throw new HttpError(404, 'SERVICE_REQUEST_NOT_FOUND', 'The service request does not exist.');
     }
