@@ -47,8 +47,19 @@ test('customer booking and service request accept supported service types', () =
 });
 
 test('admin availability requires a valid time range', () => {
+  const futureStart = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  const futureEnd = new Date(Date.now() + 60 * 60 * 1000);
   assert.throws(() => adminBookingSlotCreateSchema.parse({
-    startsAt: '2026-10-01T14:00:00.000Z',
-    endsAt: '2026-10-01T13:00:00.000Z',
+    startsAt: futureStart.toISOString(),
+    endsAt: futureEnd.toISOString(),
+  }));
+});
+
+test('admin availability cannot be published in the past', () => {
+  const pastStart = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  const pastEnd = new Date(Date.now() - 60 * 60 * 1000);
+  assert.throws(() => adminBookingSlotCreateSchema.parse({
+    startsAt: pastStart.toISOString(),
+    endsAt: pastEnd.toISOString(),
   }));
 });
