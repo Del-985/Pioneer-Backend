@@ -18,6 +18,7 @@ type RequestRow = {
   status: 'new' | 'in_review' | 'accepted' | 'denied' | 'scheduled' | 'completed' | 'cancelled';
   requested_at: Date | null;
   availability_slot_id: string | null;
+  schedule_entry_id: string | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -33,7 +34,8 @@ type SlotRow = {
 
 const requestColumns = `
   id, business_unit_id, customer_id, property_id, service_type, subject,
-  description, status, requested_at, availability_slot_id, created_at, updated_at
+  description, status, requested_at, availability_slot_id, schedule_entry_id,
+  created_at, updated_at
 `;
 
 function mapServiceRequest(row: RequestRow) {
@@ -46,6 +48,7 @@ function mapServiceRequest(row: RequestRow) {
     status: row.status,
     requestedAt: row.requested_at,
     availabilitySlotId: row.availability_slot_id,
+    scheduleEntryId: row.schedule_entry_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
