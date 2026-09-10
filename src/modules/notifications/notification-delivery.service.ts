@@ -11,17 +11,21 @@ type OutboxRow = {
   attempts: number;
 };
 
+type RenderedMessage = {
+  subject: string;
+  text: string;
+  replyTo?: string;
+};
+
 function requireSmtpConfig() {
-  if (!env.SMTP_HOST || !env.SMTP_FROM) {
-    throw new Error('SMTP_HOST and SMTP_FROM must be configured to process email notifications.');
+  if (!env.SMTP_HOST || !env.SMTP_FROM || !env.SMTP_USER || !env.SMTP_PASSWORD) {
+    throw new Error('SMTP_HOST, SMTP_FROM, SMTP_USER, and SMTP_PASSWORD must be configured to process email notifications.');
   }
   return {
     host: env.SMTP_HOST,
     port: env.SMTP_PORT,
     secure: env.SMTP_SECURE,
-    ...(env.SMTP_USER && env.SMTP_PASSWORD
-      ? { auth: { user: env.SMTP_USER, pass: env.SMTP_PASSWORD } }
-      : {}),
+    auth: { user: env.SMTP_USER, pass: env.SMTP_PASSWORD },
   };
 }
 
@@ -29,7 +33,7 @@ function textValue(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function renderMessage(row: OutboxRow): { subject: string; text: string } {
+function renderMessage(row: OutboxRow): RenderedMessage {
   if (row.template_key === 'password_reset') {
     const token = textValue(row.payload.resetToken);
     if (!token || !env.PASSWORD_RESET_URL) {
@@ -44,20 +48,28 @@ function renderMessage(row: OutboxRow): { subject: string; text: string } {
   }
 
   if (row.template_key === 'contact_submission') {
+    const email = textValue(row.payload.email).trim();
+    const contactSubject = textValue(row.payload.subject).trim();
     const lines = [
       'A new website contact submission was received.',
       '',
       `Name: ${textValue(row.payload.name)}`,
-      `Email: ${textValue(row.payload.email) || 'Not provided'}`,
+      `Email: ${email || 'Not provided'}`,
       `Phone: ${textValue(row.payload.phone) || 'Not provided'}`,
-      `Subject: ${textValue(row.payload.subject) || 'Not provided'}`,
+      `Subject: ${contactSubject || 'Not provided'}`,
       '',
       textValue(row.payload.message),
       '',
       `Site: ${textValue(row.payload.siteKey)}`,
       `Source: ${textValue(row.payload.sourcePath) || 'Not provided'}`,
     ];
-    return { subject: row.subject ?? 'New Pioneer website contact', text: lines.join('\n') };
+    return {
+      subject: contactSubject
+        ? `${row.subject ?? 'New Pioneer website contact'} — ${contactSubject}`
+        : (row.subject ?? 'New Pioneer website contact'),
+      text: lines.join('\n'),
+      ...(email ? { replyTo: email } : {}),
+    };
   }
 
   return {
@@ -108,7 +120,13 @@ export async function processEmailNotifications(limit = env.NOTIFICATION_BATCH_S
   for (const row of batch) {
     try {
       const message = renderMessage(row);
-      await transport.sendMail({ from: env.SMTP_FROM!, to: row.recipient, subject: message.subject, text: message.text });
+      await transport.sendMail({
+        from: env.SMTP_FROM!,
+        to: row.recipient,
+        subject: message.subject,
+        text: message.text,
+        ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+      });
       await pool.query(
         `UPDATE notification_outbox
          SET status = 'sent', sent_at = now(), last_error = NULL,
