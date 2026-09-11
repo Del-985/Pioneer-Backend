@@ -79,12 +79,27 @@ export const customerServiceRequestCreateSchema = z.object({
   requestedAt: z.string().datetime({ offset: true }).optional(),
   availabilitySlotId: z.string().uuid().nullable().optional(),
 }).superRefine((value, context) => {
-  if (value.requestedAt && new Date(value.requestedAt) <= new Date()) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'The requested service time must be in the future.',
-      path: ['requestedAt'],
-    });
+  if (value.requestedAt) {
+    const requestedAt = new Date(value.requestedAt);
+    if (requestedAt <= new Date()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'The requested service time must be in the future.',
+        path: ['requestedAt'],
+      });
+    }
+
+    if (
+      requestedAt.getUTCMinutes() % 15 !== 0 ||
+      requestedAt.getUTCSeconds() !== 0 ||
+      requestedAt.getUTCMilliseconds() !== 0
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'The requested service time must be in 15-minute increments.',
+        path: ['requestedAt'],
+      });
+    }
   }
 
   if (value.availabilitySlotId && !value.requestedAt) {
