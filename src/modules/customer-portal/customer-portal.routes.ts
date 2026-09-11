@@ -6,6 +6,7 @@ import { listCustomerAvailability } from './customer-availability.service.js';
 import { requireCustomerAuth } from './customer-portal.middleware.js';
 import {
   customerBookingCreateSchema,
+  customerPasswordChangeSchema,
   customerProfileUpdateSchema,
   customerPropertyCreateSchema,
   customerPropertyUpdateSchema,
@@ -18,12 +19,15 @@ import {
   createCustomerProperty,
   getCustomerBilling,
   getCustomerInvoice,
-  getCustomerProfile,
   listCustomerProperties,
   listCustomerSchedule,
-  updateCustomerProfile,
   updateCustomerProperty,
 } from './customer-portal.service.js';
+import {
+  changeCustomerPassword,
+  getCustomerProfile,
+  updateCustomerProfile,
+} from './customer-profile.service.js';
 import {
   cancelCustomerServiceRequest,
   createCustomerServiceRequest,
@@ -51,6 +55,11 @@ customerPortalRouter.get('/profile', async (req, res) => {
 customerPortalRouter.patch('/profile', async (req, res) => {
   const input = customerProfileUpdateSchema.parse(req.body);
   res.json({ data: await updateCustomerProfile(req.customerAuth!, input) });
+});
+
+customerPortalRouter.patch('/profile/password', async (req, res) => {
+  const input = customerPasswordChangeSchema.parse(req.body);
+  res.json({ data: await changeCustomerPassword(req.customerAuth!, input) });
 });
 
 customerPortalRouter.get('/properties', async (req, res) => {
