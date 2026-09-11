@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import type { z } from 'zod';
 import { pool } from '../../db/pool.js';
 import { HttpError } from '../../lib/http-error.js';
@@ -24,6 +25,19 @@ type ProfileRow = {
   created_at: Date;
 };
 
+const profileSql = `SELECT
+  c.id, c.display_name, a.email, c.phone, c.preferred_contact_method,
+  c.notify_service_confirmations, c.notify_schedule_changes,
+  c.notify_weather_updates, c.notify_marketing, c.created_at
+FROM customers c
+JOIN customer_portal_accounts a
+  ON a.customer_id = c.id
+ AND a.id = $3
+ AND a.status = 'active'
+WHERE c.id = $1
+  AND c.business_unit_id = $2
+  AND c.status = 'active'`;
+
 function mapProfile(row: ProfileRow, auth: CustomerAuthContext) {
   return {
     id: row.id,
@@ -42,29 +56,23 @@ function mapProfile(row: ProfileRow, auth: CustomerAuthContext) {
   };
 }
 
-async function readProfile(auth: CustomerAuthContext, client = pool) {
-  const result = await client.query<ProfileRow>(
-    `SELECT
-       c.id, c.display_name, a.email, c.phone, c.preferred_contact_method,
-       c.notify_service_confirmations, c.notify_schedule_changes,
-       c.notify_weather_updates, c.notify_marketing, c.created_at
-     FROM customers c
-     JOIN customer_portal_accounts a
-       ON a.customer_id = c.id
-      AND a.id = $3
-      AND a.status = 'active'
-     WHERE c.id = $1
-       AND c.business_unit_id = $2
-       AND c.status = 'active'`,
-    [auth.customerId, auth.businessUnitId, auth.accountId]
-  );
-  const row = result.rows[0];
+function profileParams(auth: CustomerAuthContext) {
+  return [auth.customerId, auth.businessUnitId, auth.accountId];
+}
+
+function requireProfile(row: ProfileRow | undefined) {
   if (!row) throw new HttpError(404, 'CUSTOMER_NOT_FOUND', 'The customer account no longer exists.');
   return row;
 }
 
+async function readProfileWithClient(auth: CustomerAuthContext, client: PoolClient) {
+  const result = await client.query<ProfileRow>(profileSql, profileParams(auth));
+  return requireProfile(result.rows[0]);
+}
+
 export async function getCustomerProfile(auth: CustomerAuthContext) {
-  return mapProfile(await readProfile(auth), auth);
+  const result = await pool.query<ProfileRow>(profileSql, profileParams(auth));
+  return mapProfile(requireProfile(result.rows[0]), auth);
 }
 
 export async function updateCustomerProfile(auth: CustomerAuthContext, input: ProfileUpdate) {
@@ -108,7 +116,7 @@ export async function updateCustomerProfile(auth: CustomerAuthContext, input: Pr
       ]
     );
 
-    const profile = await readProfile(auth, client);
+    const profile = await readProfileWithClient(auth, client);
     await client.query('COMMIT');
     return mapProfile(profile, auth);
   } catch (error: unknown) {
