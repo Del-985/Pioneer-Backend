@@ -29,11 +29,29 @@ export const customerLoginSchema = z.object({
   siteKey: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
 });
 
+const customerNotificationPreferencesSchema = z.object({
+  serviceConfirmations: z.boolean(),
+  scheduleChanges: z.boolean(),
+  weatherUpdates: z.boolean(),
+  marketing: z.boolean(),
+});
+
 export const customerProfileUpdateSchema = z.object({
   displayName: z.string().trim().min(1).max(160).optional(),
+  email: z.string().trim().email().max(320).optional(),
   phone: z.string().trim().min(7).max(50).optional(),
+  preferredContactMethod: z.enum(['text', 'phone', 'email']).optional(),
+  notifications: customerNotificationPreferencesSchema.optional(),
 }).refine((value) => Object.keys(value).length > 0, {
   message: 'At least one profile field is required.',
+});
+
+export const customerPasswordChangeSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(10).max(200),
+}).refine((value) => value.currentPassword !== value.newPassword, {
+  message: 'The new password must be different from the current password.',
+  path: ['newPassword'],
 });
 
 export const customerPropertyCreateSchema = z.object({
