@@ -13,6 +13,14 @@ import {
   toCustomerServiceRequestStatus,
 } from '../src/modules/customer-portal/customer-service-request-status.js';
 
+function futureQuarterHour(hoursAhead = 24) {
+  const date = new Date(Date.now() + hoursAhead * 60 * 60 * 1000);
+  date.setUTCSeconds(0, 0);
+  const remainder = date.getUTCMinutes() % 15;
+  if (remainder !== 0) date.setUTCMinutes(date.getUTCMinutes() + (15 - remainder));
+  return date;
+}
+
 test('customer registration enforces portal identity requirements', () => {
   const parsed = customerRegisterSchema.parse({
     displayName: 'Test Customer',
@@ -51,8 +59,8 @@ test('customer booking and service request accept supported service types', () =
   }).serviceType, 'salting');
 });
 
-test('customer service requests accept a future requested time', () => {
-  const requestedAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+test('customer service requests accept a future requested time on a quarter hour', () => {
+  const requestedAt = futureQuarterHour().toISOString();
   const parsed = customerServiceRequestCreateSchema.parse({
     serviceType: 'snow-removal',
     subject: 'Clear driveway',
@@ -60,6 +68,17 @@ test('customer service requests accept a future requested time', () => {
     requestedAt,
   });
   assert.equal(parsed.requestedAt, requestedAt);
+});
+
+test('customer service requests reject requested times outside 15-minute increments', () => {
+  const requestedAt = futureQuarterHour();
+  requestedAt.setUTCMinutes(requestedAt.getUTCMinutes() + 7);
+  assert.throws(() => customerServiceRequestCreateSchema.parse({
+    serviceType: 'snow-removal',
+    subject: 'Clear driveway',
+    description: 'Please clear the driveway.',
+    requestedAt: requestedAt.toISOString(),
+  }));
 });
 
 test('availability-backed service requests require a requested time', () => {
@@ -72,11 +91,12 @@ test('availability-backed service requests require a requested time', () => {
 });
 
 test('customer service requests reject requested times in the past', () => {
+  const requestedAt = futureQuarterHour(-2);
   assert.throws(() => customerServiceRequestCreateSchema.parse({
     serviceType: 'snow-removal',
     subject: 'Clear driveway',
     description: 'Please clear the driveway.',
-    requestedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    requestedAt: requestedAt.toISOString(),
   }));
 });
 
