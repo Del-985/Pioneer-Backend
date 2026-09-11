@@ -9,6 +9,12 @@ const serviceTypeSchema = z.enum([
   'outdoor-service',
 ]);
 
+function isQuarterHour(date: Date) {
+  return date.getUTCMinutes() % 15 === 0
+    && date.getUTCSeconds() === 0
+    && date.getUTCMilliseconds() === 0;
+}
+
 export const customerRegisterSchema = z.object({
   displayName: z.string().trim().min(1).max(160),
   email: z.string().trim().email().max(320),
@@ -89,11 +95,7 @@ export const customerServiceRequestCreateSchema = z.object({
       });
     }
 
-    if (
-      requestedAt.getUTCMinutes() % 15 !== 0 ||
-      requestedAt.getUTCSeconds() !== 0 ||
-      requestedAt.getUTCMilliseconds() !== 0
-    ) {
+    if (!isQuarterHour(requestedAt)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'The requested service time must be in 15-minute increments.',
@@ -136,6 +138,14 @@ export const adminBookingSlotCreateSchema = z.object({
       path: ['startsAt'],
     });
   }
+
+  if (!isQuarterHour(startsAt) || !isQuarterHour(endsAt)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Availability windows must start and end in 15-minute increments.',
+      path: ['startsAt'],
+    });
+  }
 });
 
 export const adminBookingSlotUpdateSchema = z.object({
@@ -145,8 +155,29 @@ export const adminBookingSlotUpdateSchema = z.object({
   serviceTypes: z.array(serviceTypeSchema).max(20).optional(),
   status: z.enum(['open', 'closed']).optional(),
   metadata: z.record(z.unknown()).optional(),
-}).refine((value) => Object.keys(value).length > 0, {
-  message: 'At least one availability field is required.',
+}).superRefine((value, context) => {
+  if (Object.keys(value).length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one availability field is required.',
+    });
+  }
+
+  if (value.startsAt && !isQuarterHour(new Date(value.startsAt))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Availability start times must use 15-minute increments.',
+      path: ['startsAt'],
+    });
+  }
+
+  if (value.endsAt && !isQuarterHour(new Date(value.endsAt))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Availability end times must use 15-minute increments.',
+      path: ['endsAt'],
+    });
+  }
 });
 
 export const adminBookingListQuerySchema = z.object({
