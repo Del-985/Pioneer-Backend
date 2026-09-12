@@ -23,7 +23,7 @@ async function start(): Promise<void> {
   const smsDeliveryEnabled = Boolean(
     env.TWILIO_ACCOUNT_SID &&
     env.TWILIO_AUTH_TOKEN &&
-    env.TWILIO_FROM_NUMBER
+    (env.TWILIO_MESSAGING_SERVICE_SID || env.TWILIO_FROM_NUMBER)
   );
   const notificationDeliveryEnabled = emailDeliveryEnabled || smsDeliveryEnabled;
   let notificationRunInFlight = false;
