@@ -26,6 +26,7 @@ const envSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().trim().min(1).optional(),
   TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
   TWILIO_FROM_NUMBER: z.string().trim().min(1).max(40).optional(),
+  TWILIO_MESSAGING_SERVICE_SID: z.string().trim().min(1).max(80).optional(),
   OBJECT_STORAGE_ENDPOINT: z.string().url().optional(),
   OBJECT_STORAGE_REGION: z.string().trim().min(1).default('auto'),
   OBJECT_STORAGE_BUCKET: z.string().trim().min(1).optional(),
@@ -44,12 +45,15 @@ const envSchema = z.object({
   const smsConfigured = Boolean(
     value.TWILIO_ACCOUNT_SID ||
     value.TWILIO_AUTH_TOKEN ||
-    value.TWILIO_FROM_NUMBER
+    value.TWILIO_FROM_NUMBER ||
+    value.TWILIO_MESSAGING_SERVICE_SID
   );
   if (smsConfigured) {
     if (!value.TWILIO_ACCOUNT_SID) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TWILIO_ACCOUNT_SID'], message: 'TWILIO_ACCOUNT_SID is required when SMS delivery is configured.' });
     if (!value.TWILIO_AUTH_TOKEN) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TWILIO_AUTH_TOKEN'], message: 'TWILIO_AUTH_TOKEN is required when SMS delivery is configured.' });
-    if (!value.TWILIO_FROM_NUMBER) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TWILIO_FROM_NUMBER'], message: 'TWILIO_FROM_NUMBER is required when SMS delivery is configured.' });
+    if (!value.TWILIO_FROM_NUMBER && !value.TWILIO_MESSAGING_SERVICE_SID) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TWILIO_MESSAGING_SERVICE_SID'], message: 'TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER is required when SMS delivery is configured.' });
+    }
   }
 
   const storageConfigured = Boolean(
