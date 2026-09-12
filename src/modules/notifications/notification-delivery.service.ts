@@ -35,7 +35,7 @@ function smsDeliveryConfigured() {
   return Boolean(
     env.TWILIO_ACCOUNT_SID &&
     env.TWILIO_AUTH_TOKEN &&
-    env.TWILIO_FROM_NUMBER
+    (env.TWILIO_MESSAGING_SERVICE_SID || env.TWILIO_FROM_NUMBER)
   );
 }
 
@@ -166,10 +166,11 @@ function renderSmsMessage(row: OutboxRow): string {
       `Pioneer Outdoor Services: Your ${service} is scheduled for ${when}.`,
       propertyAddress ? `Property: ${propertyAddress}.` : '',
       portalUrl ? `View schedule: ${portalUrl}` : '',
+      'Reply STOP to opt out or HELP for help.',
     ].filter(Boolean).join(' ');
   }
 
-  return `Pioneer Outdoor Services: ${row.subject ?? row.template_key}`;
+  return `Pioneer Outdoor Services: ${row.subject ?? row.template_key} Reply STOP to opt out or HELP for help.`;
 }
 
 function normalizePhoneNumber(value: string): string {
@@ -260,10 +261,15 @@ async function sendTwilioSms(recipient: string, message: string) {
 
   const accountSid = env.TWILIO_ACCOUNT_SID!;
   const authToken = env.TWILIO_AUTH_TOKEN!;
-  const from = normalizePhoneNumber(env.TWILIO_FROM_NUMBER!);
   const to = normalizePhoneNumber(recipient);
   const authorization = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-  const body = new URLSearchParams({ To: to, From: from, Body: message });
+  const body = new URLSearchParams({ To: to, Body: message });
+
+  if (env.TWILIO_MESSAGING_SERVICE_SID) {
+    body.set('MessagingServiceSid', env.TWILIO_MESSAGING_SERVICE_SID);
+  } else {
+    body.set('From', normalizePhoneNumber(env.TWILIO_FROM_NUMBER!));
+  }
 
   const response = await fetch(
     `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`,
