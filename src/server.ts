@@ -20,11 +20,7 @@ async function start(): Promise<void> {
     env.SMTP_USER &&
     env.SMTP_PASSWORD
   );
-  const smsDeliveryEnabled = Boolean(
-    env.TWILIO_ACCOUNT_SID &&
-    env.TWILIO_AUTH_TOKEN &&
-    (env.TWILIO_MESSAGING_SERVICE_SID || env.TWILIO_FROM_NUMBER)
-  );
+  const smsDeliveryEnabled = Boolean(env.TEXTBEE_API_KEY);
   const notificationDeliveryEnabled = emailDeliveryEnabled || smsDeliveryEnabled;
   let notificationRunInFlight = false;
 
@@ -56,7 +52,7 @@ async function start(): Promise<void> {
     logger.warn('Authenticated SMTP is not configured; email notifications will remain queued until SMTP_HOST, SMTP_FROM, SMTP_USER, and SMTP_PASSWORD are configured.');
   }
   if (!smsDeliveryEnabled) {
-    logger.warn('Twilio SMS is not configured; customer text-preference notifications will fall back to email when an email address is available.');
+    logger.warn('TextBee SMS is not configured; customer text-preference notifications will fall back to email when an email address is available.');
   }
 
   const notificationTimer = setInterval(() => void processNotificationBatch(), 30_000);
