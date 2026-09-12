@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 import { Router } from 'express';
+import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { pool } from '../../db/pool.js';
@@ -88,12 +89,13 @@ async function findCustomerBySender(sender: string): Promise<CustomerMatch | nul
 }
 
 async function queueSmsReply(
+  client: PoolClient,
   businessUnitId: string,
   recipient: string,
   templateKey: string,
   inboundEventKey: string
 ): Promise<void> {
-  await pool.query(
+  await client.query(
     `INSERT INTO notification_outbox (
        channel, recipient, template_key, subject, payload, business_unit_id
      ) VALUES (
@@ -151,6 +153,7 @@ async function processInboundSms(event: TextBeeWebhook): Promise<void> {
           WHERE id = $1 AND business_unit_id = $2`,
         [customer.id, customer.business_unit_id]
       );
+      await queueSmsReply(client, customer.business_unit_id, event.sender, 'sms_opt_out_confirmation', event.idempotencyKey);
     } else if (customer && action === 'start') {
       await client.query(
         `UPDATE customers
@@ -160,6 +163,9 @@ async function processInboundSms(event: TextBeeWebhook): Promise<void> {
           WHERE id = $1 AND business_unit_id = $2`,
         [customer.id, customer.business_unit_id]
       );
+      await queueSmsReply(client, customer.business_unit_id, event.sender, 'sms_opt_in_confirmation', event.idempotencyKey);
+    } else if (customer && action === 'help') {
+      await queueSmsReply(client, customer.business_unit_id, event.sender, 'sms_help', event.idempotencyKey);
     }
 
     await client.query('COMMIT');
@@ -168,16 +174,6 @@ async function processInboundSms(event: TextBeeWebhook): Promise<void> {
     throw error;
   } finally {
     client.release();
-  }
-
-  if (!customer) return;
-
-  if (action === 'stop') {
-    await queueSmsReply(customer.business_unit_id, event.sender, 'sms_opt_out_confirmation', event.idempotencyKey);
-  } else if (action === 'start') {
-    await queueSmsReply(customer.business_unit_id, event.sender, 'sms_opt_in_confirmation', event.idempotencyKey);
-  } else if (action === 'help') {
-    await queueSmsReply(customer.business_unit_id, event.sender, 'sms_help', event.idempotencyKey);
   }
 }
 
