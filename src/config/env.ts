@@ -23,6 +23,9 @@ const envSchema = z.object({
   SMTP_FROM: z.string().trim().min(1).max(320).optional(),
   PASSWORD_RESET_URL: z.string().url().optional(),
   NOTIFICATION_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25),
+  TWILIO_ACCOUNT_SID: z.string().trim().min(1).optional(),
+  TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
+  TWILIO_FROM_NUMBER: z.string().trim().min(1).max(40).optional(),
   OBJECT_STORAGE_ENDPOINT: z.string().url().optional(),
   OBJECT_STORAGE_REGION: z.string().trim().min(1).default('auto'),
   OBJECT_STORAGE_BUCKET: z.string().trim().min(1).optional(),
@@ -36,6 +39,17 @@ const envSchema = z.object({
   }
   if ((value.SMTP_USER && !value.SMTP_PASSWORD) || (!value.SMTP_USER && value.SMTP_PASSWORD)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['SMTP_PASSWORD'], message: 'SMTP_USER and SMTP_PASSWORD must be configured together.' });
+  }
+
+  const smsConfigured = Boolean(
+    value.TWILIO_ACCOUNT_SID ||
+    value.TWILIO_AUTH_TOKEN ||
+    value.TWILIO_FROM_NUMBER
+  );
+  if (smsConfigured) {
+    if (!value.TWILIO_ACCOUNT_SID) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TWILIO_ACCOUNT_SID'], message: 'TWILIO_ACCOUNT_SID is required when SMS delivery is configured.' });
+    if (!value.TWILIO_AUTH_TOKEN) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TWILIO_AUTH_TOKEN'], message: 'TWILIO_AUTH_TOKEN is required when SMS delivery is configured.' });
+    if (!value.TWILIO_FROM_NUMBER) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['TWILIO_FROM_NUMBER'], message: 'TWILIO_FROM_NUMBER is required when SMS delivery is configured.' });
   }
 
   const storageConfigured = Boolean(
