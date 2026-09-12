@@ -23,6 +23,7 @@ import { adminIntegrationRouter } from '../modules/integrations/admin-integratio
 import { adminIntercompanyRouter } from '../modules/intercompany/admin-intercompany.routes.js';
 import { adminLegalEntityRouter } from '../modules/legal-entities/admin-legal-entity.routes.js';
 import { adminNotificationRouter } from '../modules/notifications/admin-notification.routes.js';
+import { textBeeWebhookRouter } from '../modules/notifications/textbee-webhook.routes.js';
 import { adminConsolidatedReportRouter } from '../modules/reporting/admin-reporting.routes.js';
 import { adminSiteRouter } from '../modules/sites/admin-site.routes.js';
 import { publicSiteRouter } from '../modules/sites/public-site.routes.js';
@@ -47,6 +48,7 @@ apiRouter.use('/bookkeeping', bookkeepingFrontendCompatRouter);
 apiRouter.use('/bookkeeping', bookkeepingCompletionRouter);
 apiRouter.use('/bookkeeping', bookkeepingRouter);
 apiRouter.use('/public/sites', publicSiteRouter);
+apiRouter.use('/webhooks/textbee', textBeeWebhookRouter);
 
 apiRouter.use('/admin/overview', adminOverviewRouter);
 apiRouter.use('/admin/access', adminAccessRouter);
