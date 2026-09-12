@@ -176,6 +176,18 @@ function renderSmsMessage(row: OutboxRow): string {
     ].filter(Boolean).join(' ');
   }
 
+  if (row.template_key === 'sms_opt_out_confirmation') {
+    return 'Pioneer Outdoor Services: You are unsubscribed from transactional service texts. Reply START to opt back in.';
+  }
+
+  if (row.template_key === 'sms_opt_in_confirmation') {
+    return 'Pioneer Outdoor Services: Transactional service texts are enabled. Message frequency varies. Reply STOP to opt out or HELP for help.';
+  }
+
+  if (row.template_key === 'sms_help') {
+    return 'Pioneer Outdoor Services: For help, visit pioneeroutdoorservices.com or use the customer portal. Reply STOP to opt out.';
+  }
+
   return `Pioneer Outdoor Services: ${row.subject ?? row.template_key} Reply STOP to opt out or HELP for help.`;
 }
 
