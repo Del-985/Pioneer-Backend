@@ -183,23 +183,41 @@ export const adminBookingSlotUpdateSchema = z.object({
     });
   }
 
-  if (value.startsAt && value.endsAt) {
-    const startsAt = new Date(value.startsAt);
-    const endsAt = new Date(value.endsAt);
-    if (endsAt <= startsAt) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'The slot end must be after the start.',
-        path: ['endsAt'],
-      });
-    }
+  if (value.startsAt && !isQuarterHour(new Date(value.startsAt))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Availability start times must use 15-minute increments.',
+      path: ['startsAt'],
+    });
+  }
+
+  if (value.endsAt && !isQuarterHour(new Date(value.endsAt))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Availability end times must use 15-minute increments.',
+      path: ['endsAt'],
+    });
   }
 });
 
+export const adminBookingListQuerySchema = z.object({
+  status: z.enum(['requested', 'confirmed', 'declined', 'cancelled', 'completed']).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+});
+
 export const adminBookingUpdateSchema = z.object({
-  status: z.enum(['requested', 'confirmed', 'declined', 'cancelled', 'completed']),
-}).strict();
+  status: z.enum(['confirmed', 'declined', 'cancelled', 'completed']),
+});
+
+export const adminServiceRequestListQuerySchema = z.object({
+  status: z.enum(['new', 'in_review', 'accepted', 'denied', 'scheduled', 'completed', 'cancelled']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+});
 
 export const adminServiceRequestUpdateSchema = z.object({
   status: z.enum(['new', 'in_review', 'accepted', 'denied', 'scheduled', 'completed', 'cancelled']),
-}).strict();
+});
+
+export type CustomerServiceType = z.infer<typeof serviceTypeSchema>;
