@@ -140,10 +140,18 @@ export async function registerCustomerAccount(input: RegisterInput, metadata: Re
 
     const customerResult = await client.query<{ id: string }>(
       `INSERT INTO customers (
-         business_unit_id, display_name, contact_name, email, phone, status
-       ) VALUES ($1,$2,$2,$3,$4,'active')
+         business_unit_id, display_name, contact_name, email, phone, status,
+         preferred_contact_method, sms_transactional_consent,
+         sms_transactional_consent_at, sms_transactional_consent_source
+       ) VALUES (
+         $1,$2,$2,$3,$4,'active',
+         CASE WHEN $5 THEN 'text' ELSE 'email' END,
+         $5,
+         CASE WHEN $5 THEN now() ELSE NULL END,
+         CASE WHEN $5 THEN 'customer_registration' ELSE NULL END
+       )
        RETURNING id`,
-      [site.business_unit_id, input.displayName, email, input.phone]
+      [site.business_unit_id, input.displayName, email, input.phone, input.smsConsent]
     );
     const customer = customerResult.rows[0];
     if (!customer) {
@@ -178,6 +186,8 @@ export async function registerCustomerAccount(input: RegisterInput, metadata: Re
         displayName: input.displayName,
         email,
         phone: input.phone,
+        preferredContactMethod: input.smsConsent ? 'text' : 'email',
+        smsConsent: input.smsConsent,
       },
     };
   } catch (error: unknown) {
