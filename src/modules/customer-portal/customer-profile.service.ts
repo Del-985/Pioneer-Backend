@@ -22,13 +22,17 @@ type ProfileRow = {
   notify_schedule_changes: boolean;
   notify_weather_updates: boolean;
   notify_marketing: boolean;
+  sms_transactional_consent: boolean;
+  sms_transactional_consent_at: Date | null;
   created_at: Date;
 };
 
 const profileSql = `SELECT
   c.id, c.display_name, a.email, c.phone, c.preferred_contact_method,
   c.notify_service_confirmations, c.notify_schedule_changes,
-  c.notify_weather_updates, c.notify_marketing, c.created_at
+  c.notify_weather_updates, c.notify_marketing,
+  c.sms_transactional_consent, c.sms_transactional_consent_at,
+  c.created_at
 FROM customers c
 JOIN customer_portal_accounts a
   ON a.customer_id = c.id
@@ -51,6 +55,8 @@ function mapProfile(row: ProfileRow, auth: CustomerAuthContext) {
       weatherUpdates: row.notify_weather_updates,
       marketing: row.notify_marketing,
     },
+    smsConsent: row.sms_transactional_consent,
+    smsConsentAt: row.sms_transactional_consent_at,
     siteKey: auth.siteKey,
     createdAt: row.created_at,
   };
@@ -81,6 +87,18 @@ export async function updateCustomerProfile(auth: CustomerAuthContext, input: Pr
   try {
     await client.query('BEGIN');
 
+    const current = await readProfileWithClient(auth, client);
+    const effectiveSmsConsent = input.smsConsent ?? current.sms_transactional_consent;
+    if (input.preferredContactMethod === 'text' && !effectiveSmsConsent) {
+      throw new HttpError(400, 'SMS_CONSENT_REQUIRED', 'Consent to transactional text messages is required before text can be the preferred contact method.');
+    }
+
+    const preferredContactMethod = input.smsConsent === false
+      && input.preferredContactMethod === undefined
+      && current.preferred_contact_method === 'text'
+      ? 'email'
+      : (input.preferredContactMethod ?? null);
+
     if (email !== undefined) {
       await client.query(
         `UPDATE customer_portal_accounts
@@ -100,7 +118,18 @@ export async function updateCustomerProfile(auth: CustomerAuthContext, input: Pr
            notify_service_confirmations = COALESCE($7, notify_service_confirmations),
            notify_schedule_changes = COALESCE($8, notify_schedule_changes),
            notify_weather_updates = COALESCE($9, notify_weather_updates),
-           notify_marketing = COALESCE($10, notify_marketing)
+           notify_marketing = COALESCE($10, notify_marketing),
+           sms_transactional_consent = COALESCE($11, sms_transactional_consent),
+           sms_transactional_consent_at = CASE
+             WHEN $11 IS TRUE AND sms_transactional_consent IS FALSE THEN now()
+             WHEN $11 IS FALSE THEN NULL
+             ELSE sms_transactional_consent_at
+           END,
+           sms_transactional_consent_source = CASE
+             WHEN $11 IS TRUE AND sms_transactional_consent IS FALSE THEN 'customer_profile'
+             WHEN $11 IS FALSE THEN NULL
+             ELSE sms_transactional_consent_source
+           END
        WHERE id = $1 AND business_unit_id = $2 AND status = 'active'`,
       [
         auth.customerId,
@@ -108,11 +137,12 @@ export async function updateCustomerProfile(auth: CustomerAuthContext, input: Pr
         input.displayName ?? null,
         email ?? null,
         input.phone ?? null,
-        input.preferredContactMethod ?? null,
+        preferredContactMethod,
         input.notifications?.serviceConfirmations ?? null,
         input.notifications?.scheduleChanges ?? null,
         input.notifications?.weatherUpdates ?? null,
         input.notifications?.marketing ?? null,
+        input.smsConsent ?? null,
       ]
     );
 
