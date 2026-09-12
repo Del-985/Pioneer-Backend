@@ -1,10 +1,24 @@
+import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
+import {
+  processEmailNotifications,
+  processSmsNotifications,
+} from '../modules/notifications/notification-delivery.service.js';
 import { pool } from './pool.js';
-import { processEmailNotifications } from '../modules/notifications/notification-delivery.service.js';
 
 async function main() {
-  const result = await processEmailNotifications();
-  logger.info(result, 'Notification delivery batch completed');
+  const sms = await processSmsNotifications();
+  const emailConfigured = Boolean(
+    env.SMTP_HOST &&
+    env.SMTP_FROM &&
+    env.SMTP_USER &&
+    env.SMTP_PASSWORD
+  );
+  const email = emailConfigured
+    ? await processEmailNotifications()
+    : { claimed: 0, sent: 0, failed: 0 };
+
+  logger.info({ sms, email }, 'Notification delivery batch completed');
   await pool.end();
 }
 
