@@ -306,7 +306,7 @@ async function sendTextBeeSms(recipient: string, message: string) {
 
   const result = providerResponse?.data;
   if (result?.success === false || ((result?.failureCount ?? 0) > 0 && (result?.successCount ?? 0) === 0)) {
-    throw new Error(result.message?.trim() || 'TextBee did not accept the SMS for delivery.');
+    throw new Error(result?.message?.trim() || 'TextBee did not accept the SMS for delivery.');
   }
 }
 
