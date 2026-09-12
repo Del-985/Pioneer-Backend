@@ -19,6 +19,16 @@ type RenderedMessage = {
   replyTo?: string;
 };
 
+type TextBeeSendResponse = {
+  data?: {
+    success?: boolean;
+    message?: string;
+    smsBatchId?: string;
+    successCount?: number;
+    failureCount?: number;
+  };
+};
+
 function requireSmtpConfig() {
   if (!env.SMTP_HOST || !env.SMTP_FROM || !env.SMTP_USER || !env.SMTP_PASSWORD) {
     throw new Error('SMTP_HOST, SMTP_FROM, SMTP_USER, and SMTP_PASSWORD must be configured to process email notifications.');
@@ -32,11 +42,7 @@ function requireSmtpConfig() {
 }
 
 function smsDeliveryConfigured() {
-  return Boolean(
-    env.TWILIO_ACCOUNT_SID &&
-    env.TWILIO_AUTH_TOKEN &&
-    (env.TWILIO_MESSAGING_SERVICE_SID || env.TWILIO_FROM_NUMBER)
-  );
+  return Boolean(env.TEXTBEE_API_KEY);
 }
 
 function textValue(value: unknown): string {
@@ -254,37 +260,53 @@ async function fallBackSmsToEmail(row: OutboxRow, reason: string): Promise<boole
   return true;
 }
 
-async function sendTwilioSms(recipient: string, message: string) {
-  if (!smsDeliveryConfigured()) {
-    throw new Error('Twilio SMS delivery is not configured.');
+async function sendTextBeeSms(recipient: string, message: string) {
+  if (!env.TEXTBEE_API_KEY) {
+    throw new Error('TextBee SMS delivery is not configured.');
   }
 
-  const accountSid = env.TWILIO_ACCOUNT_SID!;
-  const authToken = env.TWILIO_AUTH_TOKEN!;
-  const to = normalizePhoneNumber(recipient);
-  const authorization = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-  const body = new URLSearchParams({ To: to, Body: message });
+  const payload: {
+    recipients: string[];
+    message: string;
+    deviceId?: string;
+    simSubscriptionId?: number;
+  } = {
+    recipients: [normalizePhoneNumber(recipient)],
+    message,
+  };
 
-  if (env.TWILIO_MESSAGING_SERVICE_SID) {
-    body.set('MessagingServiceSid', env.TWILIO_MESSAGING_SERVICE_SID);
-  } else {
-    body.set('From', normalizePhoneNumber(env.TWILIO_FROM_NUMBER!));
+  if (env.TEXTBEE_DEVICE_ID) payload.deviceId = env.TEXTBEE_DEVICE_ID;
+  if (env.TEXTBEE_SIM_SUBSCRIPTION_ID !== undefined) {
+    payload.simSubscriptionId = env.TEXTBEE_SIM_SUBSCRIPTION_ID;
   }
 
-  const response = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${authorization}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body,
-    }
-  );
+  const response = await fetch(`${env.TEXTBEE_API_BASE_URL.replace(/\/$/, '')}/gateway/send-sms`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'x-api-key': env.TEXTBEE_API_KEY,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  let providerResponse: TextBeeSendResponse | null = null;
+  try {
+    providerResponse = await response.json() as TextBeeSendResponse;
+  } catch {
+    providerResponse = null;
+  }
 
   if (!response.ok) {
-    throw new Error(`SMS provider rejected the message with status ${response.status}.`);
+    const providerMessage = providerResponse?.data?.message?.trim();
+    throw new Error(providerMessage
+      ? `TextBee rejected the message: ${providerMessage}`
+      : `TextBee rejected the message with status ${response.status}.`);
+  }
+
+  const result = providerResponse?.data;
+  if (result?.success === false || ((result?.failureCount ?? 0) > 0 && (result?.successCount ?? 0) === 0)) {
+    throw new Error(result.message?.trim() || 'TextBee did not accept the SMS for delivery.');
   }
 }
 
@@ -333,7 +355,7 @@ export async function processSmsNotifications(limit = env.NOTIFICATION_BATCH_SIZ
     }
 
     try {
-      await sendTwilioSms(row.recipient, renderSmsMessage(row));
+      await sendTextBeeSms(row.recipient, renderSmsMessage(row));
       await markSent(row);
       sent += 1;
     } catch (error) {
