@@ -26,7 +26,6 @@ async function bootstrapAdmin(): Promise<void> {
        ON CONFLICT (email)
        DO UPDATE SET
          display_name = EXCLUDED.display_name,
-         password_hash = EXCLUDED.password_hash,
          status = 'active',
          updated_at = now()
        RETURNING id`,
@@ -50,7 +49,7 @@ async function bootstrapAdmin(): Promise<void> {
     );
 
     await client.query('COMMIT');
-    logger.info({ email }, 'Platform administrator bootstrapped');
+    logger.info({ email }, 'Platform administrator bootstrapped without replacing existing credentials');
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
