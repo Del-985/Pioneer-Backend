@@ -126,14 +126,17 @@ async function ensurePayableAccount(userId: string, businessUnitId: string, lega
   return account.id;
 }
 
-async function requireEnabledSettings(userId: string, businessUnitId: string) {
+async function requireTaxAccounting(userId: string, businessUnitId: string, requireActiveRate: boolean) {
   const context = await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.write');
   await assertBookkeepingBusinessUnit(userId, businessUnitId, 'bookkeeping.post');
   const settings = await loadSettings(businessUnitId);
-  if (!settings?.enabled) {
-    throw new HttpError(409, 'SALES_TAX_NOT_ENABLED', 'Enable sales tax for this business before recording taxable sales or remittances.');
+  if (!settings) {
+    throw new HttpError(409, 'SALES_TAX_NOT_CONFIGURED', 'Configure sales tax for this business before using sales tax transactions.');
   }
-  if (settings.rate_ppm <= 0) {
+  if (requireActiveRate && !settings.enabled) {
+    throw new HttpError(409, 'SALES_TAX_NOT_ENABLED', 'Enable sales tax for this business before recording a taxable sale.');
+  }
+  if (requireActiveRate && settings.rate_ppm <= 0) {
     throw new HttpError(409, 'SALES_TAX_RATE_REQUIRED', 'Set a sales tax rate greater than zero before recording a taxable sale.');
   }
   const payableAccountId = settings.payable_account_id ?? await ensurePayableAccount(userId, businessUnitId, context.legalEntityId);
@@ -191,7 +194,7 @@ bookkeepingSalesTaxRouter.put('/settings', async (req, res) => {
 
 bookkeepingSalesTaxRouter.post('/taxable-sale', async (req, res) => {
   const input = taxableSaleSchema.parse(req.body);
-  const { settings, payableAccountId } = await requireEnabledSettings(req.auth!.userId, input.businessUnitId);
+  const { settings, payableAccountId } = await requireTaxAccounting(req.auth!.userId, input.businessUnitId, true);
   const deposit = await getBookkeepingAccount(req.auth!.userId, input.businessUnitId, input.depositAccountId);
   const revenue = await getBookkeepingAccount(req.auth!.userId, input.businessUnitId, input.revenueAccountId);
   const payable = await getBookkeepingAccount(req.auth!.userId, input.businessUnitId, payableAccountId);
@@ -236,7 +239,7 @@ bookkeepingSalesTaxRouter.post('/taxable-sale', async (req, res) => {
 
 bookkeepingSalesTaxRouter.post('/remittance', async (req, res) => {
   const input = remittanceSchema.parse(req.body);
-  const { settings, payableAccountId } = await requireEnabledSettings(req.auth!.userId, input.businessUnitId);
+  const { settings, payableAccountId } = await requireTaxAccounting(req.auth!.userId, input.businessUnitId, false);
   const payment = await getBookkeepingAccount(req.auth!.userId, input.businessUnitId, input.paymentAccountId);
   if (payment.accountType !== 'asset') throw new HttpError(400, 'INVALID_SALES_TAX_PAYMENT_ACCOUNT', 'Sales tax remittances must be paid from an Asset account.');
   const transactionInput = {
@@ -285,14 +288,14 @@ bookkeepingSalesTaxRouter.get('/report', async (req, res) => {
        COALESCE(sum(CASE WHEN je.entry_date < $3::date THEN jl.credit_cents - jl.debit_cents ELSE 0 END),0)::bigint::text AS opening_cents,
        COALESCE(sum(CASE WHEN je.entry_date BETWEEN $3::date AND $4::date THEN jl.credit_cents - jl.debit_cents ELSE 0 END),0)::bigint::text AS period_net_cents,
        COALESCE(sum(CASE WHEN je.entry_date <= $4::date THEN jl.credit_cents - jl.debit_cents ELSE 0 END),0)::bigint::text AS ending_cents,
-       COALESCE(sum(CASE WHEN je.entry_date BETWEEN $3::date AND $4::date AND je.entry_number LIKE 'TAXSALE-%' THEN jl.credit_cents - jl.debit_cents ELSE 0 END),0)::bigint::text AS tax_collected_cents,
-       COALESCE(sum(CASE WHEN je.entry_date BETWEEN $3::date AND $4::date AND je.entry_number LIKE 'TAXPAY-%' THEN jl.debit_cents - jl.credit_cents ELSE 0 END),0)::bigint::text AS tax_remitted_cents,
+       COALESCE(sum(CASE WHEN je.entry_date BETWEEN $3::date AND $4::date AND je.status = 'posted' AND je.entry_number LIKE 'TAXSALE-%' THEN jl.credit_cents - jl.debit_cents ELSE 0 END),0)::bigint::text AS tax_collected_cents,
+       COALESCE(sum(CASE WHEN je.entry_date BETWEEN $3::date AND $4::date AND je.status = 'posted' AND je.entry_number LIKE 'TAXPAY-%' THEN jl.debit_cents - jl.credit_cents ELSE 0 END),0)::bigint::text AS tax_remitted_cents,
        COALESCE((SELECT sum(rjl.credit_cents - rjl.debit_cents)
          FROM journal_lines rjl
          JOIN journal_entries rje ON rje.id = rjl.journal_entry_id
          JOIN ledger_accounts ra ON ra.id = rjl.account_id
          WHERE rje.business_unit_id = $1
-           AND rje.status IN ('posted','reversed')
+           AND rje.status = 'posted'
            AND rje.entry_date BETWEEN $3::date AND $4::date
            AND rje.entry_number LIKE 'TAXSALE-%'
            AND ra.account_type = 'revenue'),0)::bigint::text AS taxable_sales_cents
@@ -312,9 +315,10 @@ bookkeepingSalesTaxRouter.get('/report', async (req, res) => {
     entry_number: string;
     entry_date: string;
     description: string;
+    status: string;
     tax_movement_cents: string;
   }>(
-    `SELECT je.id, je.entry_number, je.entry_date::text, je.description,
+    `SELECT je.id, je.entry_number, je.entry_date::text, je.description, je.status,
             sum(jl.credit_cents - jl.debit_cents)::bigint::text AS tax_movement_cents
      FROM journal_entries je
      JOIN journal_lines jl ON jl.journal_entry_id = je.id AND jl.account_id = $2
@@ -322,7 +326,7 @@ bookkeepingSalesTaxRouter.get('/report', async (req, res) => {
        AND je.status IN ('posted','reversed')
        AND je.entry_date BETWEEN $3::date AND $4::date
        AND (je.entry_number LIKE 'TAXSALE-%' OR je.entry_number LIKE 'TAXPAY-%')
-     GROUP BY je.id, je.entry_number, je.entry_date, je.description
+     GROUP BY je.id, je.entry_number, je.entry_date, je.description, je.status
      ORDER BY je.entry_date DESC, je.created_at DESC`,
     [input.businessUnitId, payableAccountId, input.from, input.to],
   );
@@ -339,7 +343,7 @@ bookkeepingSalesTaxRouter.get('/report', async (req, res) => {
       openingPayableCents: Number(totals.opening_cents),
       netChangeCents,
       endingPayableCents: Number(totals.ending_cents),
-      entries: entries.rows.map((row) => ({ id: row.id, entryNumber: row.entry_number, entryDate: row.entry_date, description: row.description, taxMovementCents: Number(row.tax_movement_cents) })),
+      entries: entries.rows.map((row) => ({ id: row.id, entryNumber: row.entry_number, entryDate: row.entry_date, description: row.description, status: row.status, taxMovementCents: Number(row.tax_movement_cents) })),
     },
   });
 });
