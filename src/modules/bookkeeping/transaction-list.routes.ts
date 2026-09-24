@@ -62,6 +62,8 @@ type PresentedTransaction = ListedTransaction & {
   ownerDraw?: boolean;
   loanReceived?: boolean;
   loanPayment?: boolean;
+  salesTaxSale?: boolean;
+  salesTaxPayment?: boolean;
 };
 
 function compareText(left: unknown, right: unknown) {
@@ -162,7 +164,7 @@ bookkeepingTransactionListRouter.post('/split-income', async (req, res) => {
 bookkeepingTransactionListRouter.get('/', async (req, res) => {
   const rawType = typeof req.query.type === 'string' ? req.query.type : undefined;
   const requestedType = rawType === 'journal' ? 'manual' : rawType;
-  const presentedFilterTypes = new Set(['income', 'expense', 'manual', 'owner_draw', 'loan_received', 'loan_payment']);
+  const presentedFilterTypes = new Set(['income', 'expense', 'manual', 'owner_draw', 'loan_received', 'loan_payment', 'sales_tax_payment']);
   const parseInput = { ...req.query } as Record<string, unknown>;
   if (requestedType && presentedFilterTypes.has(requestedType)) delete parseInput.type;
   else if (requestedType) parseInput.type = requestedType;
