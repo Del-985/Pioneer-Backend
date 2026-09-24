@@ -6,6 +6,8 @@ export type PresentedSpecialTransaction = {
   ownerDraw?: boolean;
   loanReceived?: boolean;
   loanPayment?: boolean;
+  salesTaxSale?: boolean;
+  salesTaxPayment?: boolean;
   [key: string]: unknown;
 };
 
@@ -16,6 +18,8 @@ export function specialTransactionType(entryNumber: string | null | undefined) {
   if (value.startsWith('OWNERDRAW-')) return 'owner_draw';
   if (value.startsWith('LOANIN-')) return 'loan_received';
   if (value.startsWith('LOANPAY-')) return 'loan_payment';
+  if (value.startsWith('TAXSALE-')) return 'sales_tax_sale';
+  if (value.startsWith('TAXPAY-')) return 'sales_tax_payment';
   return null;
 }
 
@@ -27,5 +31,7 @@ export function presentSpecialTransaction<T extends PresentedSpecialTransaction>
   if (specialType === 'expense') return { ...transaction, type: 'expense', splitExpense: true } as T;
   if (specialType === 'owner_draw') return { ...transaction, type: 'owner_draw', ownerDraw: true } as T;
   if (specialType === 'loan_received') return { ...transaction, type: 'loan_received', loanReceived: true } as T;
-  return { ...transaction, type: 'loan_payment', loanPayment: true } as T;
+  if (specialType === 'loan_payment') return { ...transaction, type: 'loan_payment', loanPayment: true } as T;
+  if (specialType === 'sales_tax_sale') return { ...transaction, type: 'income', salesTaxSale: true } as T;
+  return { ...transaction, type: 'sales_tax_payment', salesTaxPayment: true } as T;
 }
