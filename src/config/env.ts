@@ -15,9 +15,6 @@ const envSchema = z.object({
   BOOTSTRAP_ADMIN_EMAIL: z.string().trim().email().optional(),
   BOOTSTRAP_ADMIN_NAME: z.string().trim().min(1).max(120).optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().min(12).max(200).optional(),
-  ADMIN_RESET_EMAIL: z.string().trim().email().optional(),
-  ADMIN_RESET_PASSWORD: z.string().min(12).max(200).optional(),
-  ADMIN_RESET_NONCE: z.string().trim().min(16).max(200).optional(),
   SMTP_HOST: z.string().trim().min(1).optional(),
   SMTP_PORT: z.coerce.number().int().positive().max(65535).default(587),
   SMTP_SECURE: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
@@ -44,16 +41,6 @@ const envSchema = z.object({
   }
   if ((value.SMTP_USER && !value.SMTP_PASSWORD) || (!value.SMTP_USER && value.SMTP_PASSWORD)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['SMTP_PASSWORD'], message: 'SMTP_USER and SMTP_PASSWORD must be configured together.' });
-  }
-
-  const adminResetValues = [value.ADMIN_RESET_EMAIL, value.ADMIN_RESET_PASSWORD, value.ADMIN_RESET_NONCE];
-  const adminResetConfigured = adminResetValues.filter(Boolean).length;
-  if (adminResetConfigured !== 0 && adminResetConfigured !== adminResetValues.length) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['ADMIN_RESET_PASSWORD'],
-      message: 'ADMIN_RESET_EMAIL, ADMIN_RESET_PASSWORD, and ADMIN_RESET_NONCE must be configured together.',
-    });
   }
 
   if ((value.TEXTBEE_DEVICE_ID || value.TEXTBEE_SIM_SUBSCRIPTION_ID !== undefined) && !value.TEXTBEE_API_KEY) {
