@@ -1,6 +1,7 @@
 import { app } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { applyEmergencyAdminReset } from './db/emergency-admin-reset.js';
 import { pool } from './db/pool.js';
 import {
   processEmailNotifications,
@@ -9,6 +10,7 @@ import {
 
 async function start(): Promise<void> {
   await pool.query('SELECT 1');
+  await applyEmergencyAdminReset();
 
   const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT }, 'Pioneer Backend listening');
