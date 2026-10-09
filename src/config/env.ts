@@ -73,6 +73,7 @@ const builtInCorsOrigins = [
   'https://pioneeroutdoorservices.com',
   'https://www.pioneeroutdoorservices.com',
   'https://customer.pioneeroutdoorservices.com',
+  'https://employee.pioneeroutdoorservices.com',
   'https://customers.pioneeroutdoorservices.com',
   'https://del-985.github.io',
 ];
