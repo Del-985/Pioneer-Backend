@@ -63,10 +63,10 @@ test('employee self-service enforces identity, assignment, status and business-u
     [ids.firstCustomer, ids.secondCustomer, ids.firstUnit, ids.secondUnit]
   );
   await pool.query(
-    `INSERT INTO employees (id, business_unit_id, user_id, display_name, email) VALUES
-       ($1, $4, $6, 'Assigned Staff', 'staff@example.com'),
-       ($2, $4, $7, 'Different Staff', 'different@example.com'),
-       ($3, $5, $7, 'Other Unit Staff', 'otherunit@example.com')`,
+    `INSERT INTO employees (id, business_unit_id, user_id, display_name, email, employee_number) VALUES
+       ($1, $4, $6, 'Assigned Staff', 'staff@example.com', 'TEST-001'),
+       ($2, $4, $7, 'Different Staff', 'different@example.com', 'TEST-002'),
+       ($3, $5, $7, 'Other Unit Staff', 'otherunit@example.com', 'TEST-003')`,
     [ids.firstEmployee, ids.otherEmployee, ids.otherUnitEmployee,
       ids.firstUnit, ids.secondUnit, ids.staff, ids.otherUser]
   );
