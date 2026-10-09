@@ -3,14 +3,16 @@ import { randomUUID } from 'node:crypto';
 import test, { after } from 'node:test';
 import { pool } from '../src/db/pool.js';
 import { employeeJob, employeeJobs, employeeProfile } from '../src/modules/employees/employee-portal.service.js';
-import { getMyReport,updateMyJob } from '../src/modules/employees/employee-field.service.js';
+import { getMyReport,updateMyJob,reviewReport } from '../src/modules/employees/employee-field.service.js';
 import { saveAvailability,listAvailability,respondToShift } from '../src/modules/employees/employee-scheduling.service.js';
+import { createRoute } from '../src/modules/employees/employee-routes.service.js';
 
 const ids = {
   entity: randomUUID(),
   firstUnit: randomUUID(),
   secondUnit: randomUUID(),
   staff: randomUUID(),
+  manager: randomUUID(),
   otherUser: randomUUID(),
   firstEmployee: randomUUID(),
   otherEmployee: randomUUID(),
@@ -31,7 +33,7 @@ after(async () => {
     await pool.query('DELETE FROM customers WHERE id = ANY($1::uuid[])',
       [[ids.firstCustomer, ids.secondCustomer]]);
     await pool.query('DELETE FROM users WHERE id = ANY($1::uuid[])',
-      [[ids.staff, ids.otherUser]]);
+      [[ids.staff, ids.otherUser, ids.manager]]);
     await pool.query('DELETE FROM business_units WHERE id = ANY($1::uuid[])',
       [[ids.firstUnit, ids.secondUnit]]);
     await pool.query('DELETE FROM legal_entities WHERE id = $1', [ids.entity]);
@@ -59,6 +61,11 @@ test('employee self-service enforces identity, assignment, status and business-u
       'employee-test-' + ids.staff + '@example.com',
       'employee-test-' + ids.otherUser + '@example.com']
   );
+  await pool.query('INSERT INTO users(id,email,display_name) VALUES($1,$2,\'Test Manager\')',
+    [ids.manager, 'employee-test-manager-' + ids.manager + '@example.com']);
+  await pool.query(`INSERT INTO user_role_assignments(user_id,role_id,business_unit_id)
+    SELECT $1,id,$2 FROM roles WHERE key='business_admin'`,
+    [ids.manager,ids.firstUnit]);
   await pool.query(
     `INSERT INTO customers (id, business_unit_id, display_name) VALUES
        ($1, $3, 'First Customer'), ($2, $4, 'Second Customer')`,
@@ -128,6 +135,13 @@ test('employee self-service enforces identity, assignment, status and business-u
     (error: unknown) => typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 409
   );
 
+  const pending=(await getMyReport(ids.staff,ids.assignedJob)).data!;
+  assert.equal((await reviewReport(ids.manager,ids.firstUnit,pending.id,
+    { decision:'approve',managerNotes:'Cleared for closeout' })).data.status,'approved');
+  assert.equal((await pool.query<{status:string}>('SELECT status FROM work_orders WHERE id=$1',
+    [ids.assignedJob])).rows[0]?.status,'completed',
+    'Manager approval should close a single-worker job');
+
   // Availability supports overnight ranges and cannot be written into other units.
   await saveAvailability(ids.staff, { businessUnitId:ids.firstUnit,
     slots:[{weekday:5,startTime:'21:00',endTime:'06:00',available:true,notes:'Overnight'}] });
@@ -155,13 +169,17 @@ test('employee self-service enforces identity, assignment, status and business-u
   );
 
   // Route crew members may read jobs shared with their crew, but nobody else.
-  const routeId=(await pool.query<{id:string}>(`
-    INSERT INTO field_routes(business_unit_id,name) VALUES($1,'Test Route') RETURNING id`,
-    [ids.firstUnit])).rows[0]!.id;
-  await pool.query('INSERT INTO field_route_members(route_id,business_unit_id,employee_id) VALUES($1,$2,$3)',
-    [routeId,ids.firstUnit,ids.otherEmployee]);
-  await pool.query(`INSERT INTO field_route_jobs(route_id,business_unit_id,work_order_id,position)
-    VALUES($1,$2,$3,0)`,[routeId,ids.firstUnit,ids.assignedJob]);
+  const route=await createRoute(ids.manager,ids.firstUnit,{
+    name:'Test Route',startsAt:null,notes:null,
+    employeeIds:[ids.otherEmployee],workOrderIds:[ids.assignedJob],
+  });
+  assert.ok(route.id);
+  await assert.rejects(
+    createRoute(ids.manager,ids.firstUnit,{
+      name:'Cross-unit Route',employeeIds:[ids.otherUnitEmployee],workOrderIds:[],
+    }),
+    (error: unknown) => typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 400
+  );
   assert.equal((await employeeJob(ids.otherUser,ids.assignedJob)).id,ids.assignedJob);
 
   await pool.query("UPDATE employees SET status='terminated' WHERE id=$1", [ids.firstEmployee]);
