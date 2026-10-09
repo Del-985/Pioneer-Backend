@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import test, { after } from 'node:test';
 import { pool } from '../src/db/pool.js';
 import { employeeJob, employeeJobs, employeeProfile } from '../src/modules/employees/employee-portal.service.js';
+import { getMyReport,updateMyJob } from '../src/modules/employees/employee-field.service.js';
+import { saveAvailability,listAvailability,respondToShift } from '../src/modules/employees/employee-scheduling.service.js';
 
 const ids = {
   entity: randomUUID(),
@@ -106,6 +108,61 @@ test('employee self-service enforces identity, assignment, status and business-u
     employeeJobs(ids.staff, { limit: 50, offset: 0, businessUnitId: ids.secondUnit }),
     (error: unknown) => typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 403
   );
+
+  // v0.2: worker can report only against assigned jobs; manager approval is separate.
+  await assert.rejects(
+    updateMyJob(ids.staff, ids.otherJob, { action: 'start' }),
+    (error: unknown) => typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 404
+  );
+  assert.equal((await updateMyJob(ids.staff, ids.assignedJob, { action:'acknowledge' })).data.status,'acknowledged');
+  assert.equal((await updateMyJob(ids.staff, ids.assignedJob, { action:'start' })).data.status,'in_progress');
+  assert.equal((await updateMyJob(ids.staff, ids.assignedJob, {
+    action:'submit',completionNotes:'Driveway cleared',saltApplied:true,saltAmountLbs:3,
+  })).data.status,'submitted');
+  assert.equal((await getMyReport(ids.staff, ids.assignedJob)).data?.status,'submitted');
+  assert.equal((await pool.query<{status:string}>('SELECT status FROM work_orders WHERE id=$1',
+    [ids.assignedJob])).rows[0]?.status,'in_progress',
+    'Worker-submitted jobs must await management approval');
+  await assert.rejects(
+    updateMyJob(ids.staff, ids.assignedJob, { action:'submit' }),
+    (error: unknown) => typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 409
+  );
+
+  // Availability supports overnight ranges and cannot be written into other units.
+  await saveAvailability(ids.staff, { businessUnitId:ids.firstUnit,
+    slots:[{weekday:5,startTime:'21:00',endTime:'06:00',available:true,notes:'Overnight'}] });
+  const available=await listAvailability(ids.staff,ids.firstUnit,true);
+  assert.equal(available.data.length,1);
+  assert.equal(available.data[0]?.startTime,'21:00:00');
+  await assert.rejects(
+    saveAvailability(ids.staff,{businessUnitId:ids.secondUnit,slots:[]}),
+    (error: unknown) => typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 403
+  );
+
+  // Shift capacity is enforced server-side, even with an offered second worker.
+  const shiftId=(await pool.query<{id:string}>(`
+    INSERT INTO employee_shifts(business_unit_id,title,starts_at,ends_at,capacity)
+    VALUES($1,'Overnight snow',now()+interval '1 day',now()+interval '2 days',1)
+    RETURNING id`,[ids.firstUnit])).rows[0]!.id;
+  await pool.query(`
+    INSERT INTO employee_shift_offers(shift_id,business_unit_id,employee_id)
+    VALUES($1,$2,$3),($1,$2,$4)`,
+    [shiftId,ids.firstUnit,ids.firstEmployee,ids.otherEmployee]);
+  assert.equal((await respondToShift(ids.staff,shiftId,'accepted')).status,'accepted');
+  await assert.rejects(
+    respondToShift(ids.otherUser,shiftId,'accepted'),
+    (error: unknown) => typeof error === 'object' && error !== null && 'statusCode' in error && error.statusCode === 409
+  );
+
+  // Route crew members may read jobs shared with their crew, but nobody else.
+  const routeId=(await pool.query<{id:string}>(`
+    INSERT INTO field_routes(business_unit_id,name) VALUES($1,'Test Route') RETURNING id`,
+    [ids.firstUnit])).rows[0]!.id;
+  await pool.query('INSERT INTO field_route_members(route_id,business_unit_id,employee_id) VALUES($1,$2,$3)',
+    [routeId,ids.firstUnit,ids.otherEmployee]);
+  await pool.query(`INSERT INTO field_route_jobs(route_id,business_unit_id,work_order_id,position)
+    VALUES($1,$2,$3,0)`,[routeId,ids.firstUnit,ids.assignedJob]);
+  assert.equal((await employeeJob(ids.otherUser,ids.assignedJob)).id,ids.assignedJob);
 
   await pool.query("UPDATE employees SET status='terminated' WHERE id=$1", [ids.firstEmployee]);
   await assert.rejects(
