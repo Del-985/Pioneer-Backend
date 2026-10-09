@@ -42,6 +42,10 @@ type JobRow = {
   city: string | null;
   state: string | null;
   postal_code: string | null;
+  report_status: string | null;
+  route_id: string | null;
+  route_name: string | null;
+  route_position: number | null;
 };
 
 function mapEmployee(row: EmployeeRow) {
@@ -72,6 +76,10 @@ function mapJob(row: JobRow) {
     completedAt: row.completed_at,
     createdAt: row.created_at,
     customerName: row.customer_name,
+    reportStatus: row.report_status,
+    routeId: row.route_id,
+    routeName: row.route_name,
+    routePosition: row.route_position,
     serviceAddress: row.address_line1 ? {
       addressLine1: row.address_line1,
       addressLine2: row.address_line2,
@@ -123,15 +131,24 @@ const jobSelect = `SELECT wo.id, wo.business_unit_id, b.name AS business_name,
   wo.work_order_number, wo.title, wo.description, wo.status,
   wo.scheduled_start, wo.scheduled_end, wo.completed_at, wo.created_at,
   c.display_name AS customer_name,
-  ca.address_line1, ca.address_line2, ca.city, ca.state, ca.postal_code
+  ca.address_line1, ca.address_line2, ca.city, ca.state, ca.postal_code,
+  fr.status AS report_status,rt.id AS route_id,rt.name AS route_name,
+  rj.position AS route_position
   FROM work_orders wo
-  JOIN employees e ON e.id = wo.assigned_employee_id
-    AND e.business_unit_id = wo.business_unit_id
+  JOIN employees e ON e.user_id = $1 AND e.business_unit_id = wo.business_unit_id
+    AND e.status = 'active'
   JOIN business_units b ON b.id = wo.business_unit_id
   JOIN customers c ON c.id = wo.customer_id AND c.business_unit_id = wo.business_unit_id
   LEFT JOIN customer_addresses ca ON ca.id = wo.service_address_id
     AND ca.business_unit_id = wo.business_unit_id
-  WHERE e.user_id = $1 AND e.status = 'active' AND b.status = 'active'`;
+  LEFT JOIN field_route_jobs rj ON rj.work_order_id=wo.id
+  LEFT JOIN field_routes rt ON rt.id=rj.route_id AND rt.status<>'cancelled'
+  LEFT JOIN field_job_reports fr ON fr.work_order_id=wo.id AND fr.employee_id=e.id
+  WHERE b.status = 'active'
+    AND (wo.assigned_employee_id=e.id OR EXISTS (
+      SELECT 1 FROM field_route_members rm
+      WHERE rm.route_id=rt.id AND rm.employee_id=e.id
+    ))`;
 
 export async function employeeJobs(userId: string, query: EmployeeJobsQuery) {
   await assertEmployeeBusinessScope(userId, query.businessUnitId);
