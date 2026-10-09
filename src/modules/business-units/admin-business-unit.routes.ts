@@ -7,6 +7,7 @@ import { adminContactRouter } from '../contacts/admin-contact.routes.js';
 import { adminCustomerPortalRouter } from '../customer-portal/admin-customer-portal.routes.js';
 import { adminCustomerRouter } from '../customers/admin-customer.routes.js';
 import { adminEmployeeRouter } from '../employees/admin-employee.routes.js';
+import { adminFieldRouter } from '../employees/admin-field.routes.js';
 import { adminEstimateRouter } from '../estimates/admin-estimate.routes.js';
 import { adminFileRouter } from '../files/admin-file.routes.js';
 import { adminFormRouter } from '../forms/admin-form.routes.js';
@@ -63,6 +64,7 @@ adminBusinessUnitRouter.use('/:businessUnitId/work-orders', adminWorkOrderRouter
 adminBusinessUnitRouter.use('/:businessUnitId/invoices', adminInvoiceRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/payments', adminPaymentRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/employees', adminEmployeeRouter);
+adminBusinessUnitRouter.use('/:businessUnitId/field', adminFieldRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/vehicles', adminVehicleRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/mileage', adminMileageRouter);
 adminBusinessUnitRouter.use('/:businessUnitId/bookkeeping', adminBookkeepingRouter);
