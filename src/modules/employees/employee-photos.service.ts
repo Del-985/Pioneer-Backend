@@ -3,7 +3,7 @@ import { pool } from '../../db/pool.js';
 import { HttpError } from '../../lib/http-error.js';
 import { z } from 'zod';
 import { assertBusinessUnitPermission } from '../access/authorization.service.js';
-import { createDownloadUrl, createUploadUrl, verifyUploadedObject } from '../bookkeeping/object-storage.service.js';
+import { createDownloadUrl, createUploadUrl, isObjectStorageConfigured, verifyUploadedObject } from '../bookkeeping/object-storage.service.js';
 import { resolveAssignedEmployee } from './employee-field.service.js';
 
 export const photoIntentSchema=z.object({
@@ -34,6 +34,10 @@ export async function employeeReportPhotos(userId:string,workOrderId:string){
 export async function newPhotoIntent(
   userId:string,workOrderId:string,input:z.infer<typeof photoIntentSchema>
 ){
+  if(!isObjectStorageConfigured()){
+    throw new HttpError(503,'PHOTO_STORAGE_UNAVAILABLE',
+      'Photo storage is not configured. Save your work notes and ask an administrator to enable object storage.');
+  }
   const e=await resolveAssignedEmployee(userId,workOrderId);
   if(['completed','cancelled','draft'].includes(e.job_status))
     throw new HttpError(409,'JOB_NOT_ACTIVE','This job cannot receive photos.');
