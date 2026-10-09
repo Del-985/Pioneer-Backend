@@ -29,11 +29,13 @@ import { adminConsolidatedReportRouter } from '../modules/reporting/admin-report
 import { adminSiteRouter } from '../modules/sites/admin-site.routes.js';
 import { publicSiteRouter } from '../modules/sites/public-site.routes.js';
 import { adminUserRouter } from '../modules/users/admin-user.routes.js';
+import { employeePortalRouter } from '../modules/employees/employee-portal.routes.js';
 
 export const apiRouter = Router();
 
 apiRouter.use('/health', healthRouter);
 apiRouter.use('/auth', authRouter);
+apiRouter.use('/employee', employeePortalRouter);
 apiRouter.use('/customer', customerPortalRouter);
 apiRouter.use('/business-units', businessUnitRouter);
 apiRouter.use('/bookkeeping/sales-tax', bookkeepingSalesTaxRouter);

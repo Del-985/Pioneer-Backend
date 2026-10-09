@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { pool } from '../../db/pool.js';
+import { env } from '../../config/env.js';
 import { HttpError } from '../../lib/http-error.js';
 import { hashPassword, verifyPassword } from './password.js';
 
@@ -60,13 +61,31 @@ export async function changePassword(
   }
 }
 
-export async function requestPasswordReset(email: string, metadata: Metadata): Promise<void> {
+export async function requestPasswordReset(email: string, metadata: Metadata, options: { audience?: 'employee' } = {}): Promise<void> {
   const userResult = await pool.query<{ id: string; email: string }>(
     `SELECT id, email FROM users WHERE email = $1 AND status = 'active'`,
     [email]
   );
   const user = userResult.rows[0];
   if (!user) return;
+
+  // Default staff-only identities to the employee portal, regardless of which site
+  // requested recovery. Explicit employee invitations always use employee links.
+  const target = await pool.query<{ has_employee: boolean; has_admin_role: boolean }>(
+    `SELECT
+       EXISTS (
+         SELECT 1 FROM employees e WHERE e.user_id = $1 AND e.status = 'active'
+       ) AS has_employee,
+       EXISTS (
+         SELECT 1 FROM user_role_assignments ura
+         JOIN roles r ON r.id = ura.role_id
+         WHERE ura.user_id = $1 AND r.key <> 'employee'
+       ) AS has_admin_role`,
+    [user.id]
+  );
+  const isEmployee = options.audience === 'employee' ||
+    (target.rows[0]?.has_employee && !target.rows[0]?.has_admin_role);
+  const audience = isEmployee && env.EMPLOYEE_PASSWORD_RESET_URL ? 'employee' : 'admin';
 
   const token = randomBytes(32).toString('base64url');
   const tokenHash = hashToken(token);
@@ -90,7 +109,7 @@ export async function requestPasswordReset(email: string, metadata: Metadata): P
       `INSERT INTO notification_outbox (
          channel, recipient, template_key, subject, payload
        ) VALUES ('email', $1, 'password_reset', 'Reset your Pioneer password', $2::jsonb)`,
-      [user.email, JSON.stringify({ resetToken: token, expiresAt: expiresAt.toISOString() })]
+      [user.email, JSON.stringify({ resetToken: token, expiresAt: expiresAt.toISOString(), audience })]
     );
     await client.query('COMMIT');
   } catch (error) {

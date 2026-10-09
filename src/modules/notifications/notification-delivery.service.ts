@@ -119,10 +119,15 @@ function renderMessage(row: OutboxRow): RenderedMessage {
 
   if (row.template_key === 'password_reset') {
     const token = textValue(row.payload.resetToken);
-    if (!token || !env.PASSWORD_RESET_URL) {
-      throw new Error('PASSWORD_RESET_URL and a reset token are required for password reset delivery.');
+    // Never trust a recipient-controlled reset URL. Only configured server URLs
+    // are used, so account-reset tokens cannot be redirected to an arbitrary host.
+    const destination = row.payload.audience === 'employee'
+      ? env.EMPLOYEE_PASSWORD_RESET_URL
+      : env.PASSWORD_RESET_URL;
+    if (!token || !destination) {
+      throw new Error('A configured reset destination and token are required for password reset delivery.');
     }
-    const resetUrl = new URL(env.PASSWORD_RESET_URL);
+    const resetUrl = new URL(destination);
     resetUrl.searchParams.set('token', token);
     return {
       subject: row.subject ?? 'Reset your Pioneer password',

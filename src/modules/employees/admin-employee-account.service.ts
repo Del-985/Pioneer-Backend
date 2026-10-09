@@ -68,7 +68,7 @@ export async function inviteEmployeeAccount(
   // Existing employee-only accounts can receive a new single-use reset link.
   if (employee.user_id) {
     const linked = await getEmployeeLoginEmail(businessUnitId, employeeId);
-    await requestPasswordReset(linked.email, metadata);
+    await requestPasswordReset(linked.email, metadata, { audience: 'employee' });
     await writeAuditEvent({ actorUserId, businessUnitId, action: 'employee.invitation.resent',
       resourceType: 'employee', resourceId: employeeId, ipAddress: metadata.ipAddress, userAgent: metadata.userAgent });
     return { accepted: true, userId: employee.user_id };
@@ -119,7 +119,7 @@ export async function inviteEmployeeAccount(
   }
 
   // Uses the established password-reset outbox and a single-use 30-minute token.
-  await requestPasswordReset(employee.email, metadata);
+  await requestPasswordReset(employee.email, metadata, { audience: 'employee' });
   return { accepted: true, userId: newUserId! };
 }
 
@@ -128,7 +128,7 @@ export async function resetEmployeePassword(
 ) {
   await assertCanManageAccounts(actorUserId, businessUnitId);
   const { employee, email } = await getEmployeeLoginEmail(businessUnitId, employeeId);
-  await requestPasswordReset(email, metadata);
+  await requestPasswordReset(email, metadata, { audience: 'employee' });
   await writeAuditEvent({ actorUserId, businessUnitId, action: 'employee.password_reset.requested',
     resourceType: 'employee', resourceId: employee.id, ipAddress: metadata.ipAddress, userAgent: metadata.userAgent });
   return { accepted: true };

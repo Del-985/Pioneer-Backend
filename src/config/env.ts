@@ -22,6 +22,7 @@ const envSchema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().trim().min(1).max(320).optional(),
   PASSWORD_RESET_URL: z.string().url().optional(),
+  EMPLOYEE_PASSWORD_RESET_URL: z.string().url().optional(),
   NOTIFICATION_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25),
   TEXTBEE_API_BASE_URL: z.string().url().default('https://api.textbee.dev/api/v1'),
   TEXTBEE_API_KEY: z.string().trim().min(1).optional(),
