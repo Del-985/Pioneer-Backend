@@ -117,6 +117,29 @@ function renderMessage(row: OutboxRow): RenderedMessage {
     return renderScheduledServiceEmail(row);
   }
 
+  if (row.template_key === 'employee_job_assigned' ||
+      row.template_key === 'employee_job_cancelled' ||
+      row.template_key === 'employee_route_assigned' ||
+      row.template_key === 'employee_shift_offer') {
+    const name=textValue(row.payload.employeeName);
+    const title=textValue(row.payload.jobTitle) ||
+      textValue(row.payload.shiftTitle) || textValue(row.payload.routeName) || 'Assignment';
+    const when=textValue(row.payload.scheduledStart) || textValue(row.payload.startsAt);
+    const portalUrl=textValue(row.payload.portalUrl);
+    const cancelled=row.template_key==='employee_job_cancelled';
+    const heading=cancelled?'An assignment has been cancelled.':
+      row.template_key==='employee_shift_offer'?'You have a new shift offer.':
+      row.template_key==='employee_route_assigned'?'You have been assigned to a route.':
+      'Your assigned job was created or changed.';
+    return {
+      subject:row.subject ?? 'Pioneer employee assignment',
+      text:[name?`Hi ${name},`:'Hello,','',heading,'',`Assignment: ${title}`,
+        when?`Scheduled: ${formatScheduledTime(when,'America/Detroit')}`:'',
+        portalUrl?`View your employee portal: ${portalUrl}`:'',
+        '','Pioneer Outdoor Services'].filter(Boolean).join('\n'),
+    };
+  }
+
   if (row.template_key === 'password_reset') {
     const token = textValue(row.payload.resetToken);
     // Never trust a recipient-controlled reset URL. Only configured server URLs
