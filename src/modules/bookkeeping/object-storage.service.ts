@@ -1,5 +1,6 @@
 import {
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
   type S3ClientConfig,
@@ -77,4 +78,22 @@ export async function createDownloadUrl(storageKey: string) {
   const config = requireStorageConfig();
   const command = new GetObjectCommand({ Bucket: config.bucket, Key: storageKey });
   return getSignedUrl(storageClient(), command, { expiresIn: config.expiresIn });
+}
+
+export async function verifyUploadedObject(storageKey: string, contentType: string, byteSize: number) {
+  const config = requireStorageConfig();
+  try {
+    const head = await storageClient().send(new HeadObjectCommand({
+      Bucket: config.bucket,
+      Key: storageKey,
+    }));
+    if (Number(head.ContentLength ?? 0) !== byteSize || head.ContentType !== contentType) {
+      throw new HttpError(409, 'PHOTO_UPLOAD_MISMATCH',
+        'Uploaded file size or content type does not match the photo request.');
+    }
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(409, 'PHOTO_UPLOAD_NOT_FOUND',
+      'The photo was not found in object storage. Complete the upload before confirming.');
+  }
 }
