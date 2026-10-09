@@ -15,7 +15,7 @@ type EmployeeAccountRow = {
 
 async function assertCanManageAccounts(actorUserId: string, businessUnitId: string) {
   await assertBusinessUnitPermission(actorUserId, businessUnitId, 'employees.write');
-  await assertBusinessUnitPermission(actorUserId, businessUnitId, 'users.write');
+  await assertBusinessUnitPermission(actorUserId, businessUnitId, 'employee_accounts.manage');
 }
 
 async function loadEmployee(businessUnitId: string, employeeId: string) {
