@@ -77,7 +77,7 @@ async function assignRouteContents(
         WHERE business_unit_id=$1 AND id=ANY($2::uuid[]) AND status<>'cancelled'`,
         [businessUnitId,distinct]);
       if(verified.rows.length!==distinct.length)throw new HttpError(400,'INVALID_ROUTE_JOBS','Each job must belong to this business and not be cancelled.');
-      const assigned=await c.query<{work_order_id:string}>(`
+      const assigned=await c.query(`
         SELECT work_order_id FROM field_route_jobs WHERE work_order_id=ANY($1::uuid[]) AND route_id<>$2`,
         [distinct,routeId]);
       if(assigned.rows.length)throw new HttpError(409,'JOB_ALREADY_ROUTED','A selected job already belongs to another route.');
@@ -91,7 +91,7 @@ async function assignRouteContents(
 }
 async function notifyNewCrew(c:any,businessUnitId:string,routeId:string,employeeIds:string[],routeName:string){
   if(!employeeIds.length)return;
-  const rows=(await c.query<{email:string|null;display_name:string}>(`
+  const rows=(await c.query(`
     SELECT email::text,display_name FROM employees WHERE business_unit_id=$1 AND id=ANY($2::uuid[])`,
     [businessUnitId,employeeIds])).rows;
   for(const e of rows){
