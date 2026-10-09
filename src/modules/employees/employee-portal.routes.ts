@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { isObjectStorageConfigured } from '../bookkeeping/object-storage.service.js';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth.js';
 import { requireRouteParam } from '../../lib/route-param.js';
@@ -23,6 +24,10 @@ employeePortalRouter.use(requireAuth);
 // Self-service endpoints intentionally do not accept an employeeId supplied by
 // the browser. Employee identity and business unit access derive from the
 // authenticated user and their active employee records.
+employeePortalRouter.get('/capabilities', async (_req, res) => {
+  res.json({data:{photoUploads:isObjectStorageConfigured()}});
+});
+
 employeePortalRouter.get('/me', async (req, res) => {
   const actor = req.auth!;
   res.json({ data: await employeeProfile(actor.userId, actor) });
