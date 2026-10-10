@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth.js';
 import { requireRouteParam } from '../../lib/route-param.js';
 import { listReports,reviewReport,fieldReviewSchema } from './employee-field.service.js';
-import { adminReportPhotos } from './employee-photos.service.js';
+import { adminReportPhotos,adminPhotoContent } from './employee-photos.service.js';
 import {
   listAvailability,listShifts,createShift,offerShift,changeShiftStatus,
   shiftSchema,shiftOfferSchema,shiftStatusSchema,
@@ -28,6 +28,15 @@ adminFieldRouter.post('/reports/:reportId/review',async(req,res)=>{
 adminFieldRouter.get('/reports/:reportId/photos',async(req,res)=>{
   res.json(await adminReportPhotos(req.auth!.userId,unit(req),
     requireRouteParam(req,'reportId')));
+});
+adminFieldRouter.get('/photos/:photoId/content',async(req,res)=>{
+  const image=await adminPhotoContent(req.auth!.userId,unit(req),
+    requireRouteParam(req,'photoId'));
+  res.setHeader('Content-Type',image.contentType);
+  res.setHeader('Cache-Control','private, no-store');
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Content-Disposition','inline');
+  res.send(image.content);
 });
 adminFieldRouter.get('/availability',async(req,res)=>{
   res.json(await listAvailability(req.auth!.userId,unit(req),false));

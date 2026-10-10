@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { isObjectStorageConfigured } from '../bookkeeping/object-storage.service.js';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth.js';
@@ -11,7 +11,7 @@ import {
 } from './employee-portal.service.js';
 
 import { fieldActionSchema, getMyReport, updateMyJob } from './employee-field.service.js';
-import { employeeReportPhotos, newPhotoIntent, confirmPhoto, photoIntentSchema } from './employee-photos.service.js';
+import { employeeReportPhotos, newPhotoIntent, confirmPhoto, photoIntentSchema, storeEmployeePhotoContent, employeePhotoContent } from './employee-photos.service.js';
 import {
  availabilitySchema, employeeSelf, listAvailability, saveAvailability,
  listShifts, respondToShift, shiftResponseSchema,
@@ -25,7 +25,7 @@ employeePortalRouter.use(requireAuth);
 // the browser. Employee identity and business unit access derive from the
 // authenticated user and their active employee records.
 employeePortalRouter.get('/capabilities', async (_req, res) => {
-  res.json({data:{photoUploads:isObjectStorageConfigured()}});
+  res.json({data:{photoUploads:true,photoStorage:isObjectStorageConfigured() ? 'object_storage' : 'database'}});
 });
 
 employeePortalRouter.get('/me', async (req, res) => {
@@ -55,6 +55,26 @@ employeePortalRouter.get('/jobs/:jobId/photos',async(req,res)=>{
 employeePortalRouter.post('/jobs/:jobId/photos/upload-intent',async(req,res)=>{
   res.status(201).json(await newPhotoIntent(req.auth!.userId,
     requireRouteParam(req,'jobId'),photoIntentSchema.parse(req.body)));
+});
+employeePortalRouter.post(
+  '/photos/:photoId/content',
+  express.raw({type:'application/octet-stream',limit:'10mb'}),
+  async (req,res) => {
+    if(!Buffer.isBuffer(req.body)) {
+      res.status(400).json({error:{code:'PHOTO_BODY_REQUIRED',message:'Upload photo bytes using application/octet-stream.'}});
+      return;
+    }
+    res.json(await storeEmployeePhotoContent(req.auth!.userId,
+      requireRouteParam(req,'photoId'),req.body));
+  }
+);
+employeePortalRouter.get('/photos/:photoId/content',async(req,res)=>{
+  const image=await employeePhotoContent(req.auth!.userId,requireRouteParam(req,'photoId'));
+  res.setHeader('Content-Type',image.contentType);
+  res.setHeader('Cache-Control','private, no-store');
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Content-Disposition','inline');
+  res.send(image.content);
 });
 employeePortalRouter.post('/photos/:photoId/complete',async(req,res)=>{
   res.json(await confirmPhoto(req.auth!.userId,requireRouteParam(req,'photoId')));
