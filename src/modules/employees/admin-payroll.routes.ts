@@ -1,4 +1,10 @@
 import {
+ deductionRuleSchema,nativePrepareSchema,nativeVoidSchema,
+ setNativeDeduction,listNativeDeductions,prepareNativeCalculation,
+ approveNativeCalculation,voidNativeCalculation,listNativeCalculations,
+ nativeCalculationDetail,
+} from './payroll-native.service.js';
+import {
   prepareProviderSchema, submitProviderSchema, importProviderSchema,
   prepareProvider,providerDetail,providerList,providerExport,
   recordProviderSubmission,importProviderResults,
@@ -120,4 +126,34 @@ adminPayrollRouter.post('/runs/:runId/provider/import',async(req,res)=>{
   const input=importProviderSchema.parse(req.body);
   res.json(await importProviderResults(req.auth!.userId,unit(req),
     requireRouteParam(req,'runId'),input));
+});
+
+adminPayrollRouter.get('/native/deductions',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await listNativeDeductions(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/native/deductions',async(req,res)=>{
+ res.status(201).json(await setNativeDeduction(req.auth!.userId,unit(req),
+  deductionRuleSchema.parse(req.body)));
+});
+adminPayrollRouter.get('/native/calculations',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await listNativeCalculations(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/runs/:runId/native/prepare',async(req,res)=>{
+ res.status(201).json(await prepareNativeCalculation(req.auth!.userId,unit(req),
+  requireRouteParam(req,'runId'),nativePrepareSchema.parse(req.body??{})));
+});
+adminPayrollRouter.get('/runs/:runId/native',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await nativeCalculationDetail(req.auth!.userId,unit(req),
+  requireRouteParam(req,'runId')));
+});
+adminPayrollRouter.post('/runs/:runId/native/approve',async(req,res)=>{
+ res.json(await approveNativeCalculation(req.auth!.userId,unit(req),
+  requireRouteParam(req,'runId')));
+});
+adminPayrollRouter.post('/runs/:runId/native/void',async(req,res)=>{
+ res.json(await voidNativeCalculation(req.auth!.userId,unit(req),
+  requireRouteParam(req,'runId'),nativeVoidSchema.parse(req.body)));
 });
