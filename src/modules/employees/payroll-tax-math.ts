@@ -8,25 +8,31 @@
 // https://dam.assets.ohio.gov/image/upload/tax.ohio.gov/employer_withholding/2026%20Withholding%20Tables/WHT_OptionalComputerFormula_2026.pdf
 // Toledo 2.5% qualifying wages: https://toledo.oh.gov/pay-taxes
 // Returns tax estimates; never authorizes money movement or filing.
-export const RULE_SET='2026-federal-ohio-aug-toledo-v1' as const;
+export const RULE_SET='2026-federal-ohio-aug-toledo-v2' as const;
 export const SS_WAGE_BASE_CENTS=18_450_000;
 export const ADDITIONAL_MEDICARE_THRESHOLD_CENTS=20_000_000;
 type FilingStatus='single'|'married_joint'|'head_of_household';
 export type Election={
  federalStatus:FilingStatus;federalTwoJobs:boolean;
+ federalExempt?:boolean;federalExemptionYear?:number;ohioExtraCents?:number;
  federalStep3CreditsCents:number;federalStep4aIncomeCents:number;
  federalStep4bDeductionsCents:number;federalStep4cExtraCents:number;
  ohioIt4Exemptions:number;
  schoolDistrictCode:string;schoolDistrictBasis:'none'|'earned_income'|'traditional';
  schoolDistrictRateBps:number;toledoWorkplaceConfirmed:boolean;
 };
-export type WageHistory={priorSocialSecurityWagesCents:number;priorMedicareWagesCents:number};
+export type WageHistory={priorSocialSecurityWagesCents:number;priorMedicareWagesCents:number;
+ priorFutaWagesCents?:number;priorOhioUiWagesCents?:number};
+export type EmployerTaxSettings={
+ ohioUiRateBps:number;futaEffectiveRateBps:number;verified:boolean;recordReference:string;
+};
 export type TaxInput={
  grossCents:number;voluntaryDeductionsCents:number;reimbursementCents:number;
  // Bonuses, commissions and retroactive payments may require Ohio's
  // supplemental withholding rate rather than regular wage tables.
  ohioSupplementalWagesCents?:number;
- payPeriods:number;periodEnd:string;periodYear:number;
+ payPeriods:number;payDate:string;
+ employerTaxes?:EmployerTaxSettings;
  election:Election;history:WageHistory;
  reimbursementsVerifiedNonTaxable:boolean;
 };
@@ -66,6 +72,7 @@ export function centsRatio(cents:number,bps:number,denom=10000):number{
 }
 export function federalIncome2026(wageCents:number,periods:number,e:Election){
  if(![52,26].includes(periods))throw new Error('Unsupported pay frequency');
+ if(e.federalExempt)return 0;
  const adjustment=(e.federalTwoJobs?0:e.federalStatus==='married_joint'?1_290_000:860_000);
  const annual=Math.max(0,wageCents*periods+e.federalStep4aIncomeCents-
    e.federalStep4bDeductionsCents-adjustment);
@@ -96,30 +103,39 @@ function assertValid(i:TaxInput){
   i.ohioSupplementalWagesCents??0,
   i.history.priorSocialSecurityWagesCents,i.history.priorMedicareWagesCents,
   i.election.federalStep3CreditsCents,i.election.federalStep4aIncomeCents,
-  i.election.federalStep4bDeductionsCents,i.election.federalStep4cExtraCents];
+  i.election.federalStep4bDeductionsCents,i.election.federalStep4cExtraCents,
+  i.election.ohioExtraCents??0];
  if(values.some(x=>!Number.isSafeInteger(x)||x<0||x>5_000_000_000))
   throw new Error('Invalid taxable wages, prior wages or W-4 amounts');
+ if((i.ohioSupplementalWagesCents??0)>0&&
+   i.history.priorMedicareWagesCents+i.grossCents>=100_000_000)
+  throw new Error('High annual compensation with supplemental wages requires separate federal review');
  if(i.grossCents<i.voluntaryDeductionsCents)
   throw new Error('Voluntary deductions cannot exceed wages');
  if((i.ohioSupplementalWagesCents??0)>i.grossCents)
   throw new Error('Ohio supplemental wages cannot exceed gross wages');
  if(i.reimbursementCents>0&&!i.reimbursementsVerifiedNonTaxable)
   throw new Error('Reimbursement tax status must be reviewed before calculating taxes');
- if(![26,52].includes(i.payPeriods)||i.periodYear!==2026||
-  i.periodEnd<'2026-08-01'||i.periodEnd>'2026-12-31')
-  throw new Error('2026 Ohio tax rules supported only for periods ending Aug 1–Dec 31');
+ const paid=new Date(i.payDate+'T12:00:00Z');
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(i.payDate)||!Number.isFinite(paid.getTime())||
+  paid.toISOString().slice(0,10)!==i.payDate||![26,52].includes(i.payPeriods)||
+  i.payDate<'2026-08-01'||i.payDate>'2026-12-31')
+  throw new Error('Supported actual pay dates are August 1–December 31, 2026');
+ if(i.election.federalExempt && (i.election.federalExemptionYear!==2026||
+  i.election.federalTwoJobs||i.election.federalStep3CreditsCents||
+  i.election.federalStep4aIncomeCents||i.election.federalStep4bDeductionsCents||
+  i.election.federalStep4cExtraCents))
+  throw new Error('Exempt W-4 requires a current-year signed claim and no conflicting steps 2–4');
  if(!i.election.toledoWorkplaceConfirmed)
   throw new Error('All wages in the register must be verified taxable Toledo work');
  if(!Number.isSafeInteger(i.election.ohioIt4Exemptions)||
   i.election.ohioIt4Exemptions<0||i.election.ohioIt4Exemptions>100)
   throw new Error('Invalid Ohio exemption count');
- if(i.election.schoolDistrictBasis==='traditional')
-  throw new Error('Traditional-base school district withholding requires a separate verified formula');
- if(i.election.schoolDistrictBasis==='earned_income'){
+ if(i.election.schoolDistrictBasis==='earned_income'||i.election.schoolDistrictBasis==='traditional'){
   if(!/^\d{4}$/.test(i.election.schoolDistrictCode)||
     !Number.isInteger(i.election.schoolDistrictRateBps)||
     i.election.schoolDistrictRateBps<=0||i.election.schoolDistrictRateBps>500)
-    throw new Error('Invalid or unverified earned-income school district configuration');
+    throw new Error('Invalid or unverified school district configuration');
  }else if(i.election.schoolDistrictCode!=='none'||
    i.election.schoolDistrictRateBps!==0)
   throw new Error('Verify school district tax applicability before calculating');
@@ -133,10 +149,14 @@ export function calculateTax2026(i:TaxInput){
  // Only regular compensation goes through the 2026 computer formula.
  const supplemental=i.ohioSupplementalWagesCents??0;
  const ohio=ohioIncomeAugust2026(g-supplemental,p,e.ohioIt4Exemptions)+
-  centsRatio(supplemental,275);
+  centsRatio(supplemental,275)+(e.ohioExtraCents??0);
  const toledo=centsRatio(g,250);
- const school=e.schoolDistrictBasis==='earned_income'?
-  centsRatio(g,e.schoolDistrictRateBps):0;
+ // Ohio SDIT computer method: traditional districts allow $650/year per
+ // IT-4 exemption; earned-income districts allow no exemption reduction.
+ const schoolBase=e.schoolDistrictBasis==='traditional'?
+  Math.max(0,g-e.ohioIt4Exemptions*(65000/p)):g;
+ const school=e.schoolDistrictBasis!=='none'?centsRatio(schoolBase,e.schoolDistrictRateBps):0;
+ const employer=calculateEmployerTaxes(g,h,i.employerTaxes);
  const ssWages=Math.min(g,Math.max(0,SS_WAGE_BASE_CENTS-
   h.priorSocialSecurityWagesCents));
  const employeeSS=centsRatio(ssWages,620);
@@ -161,6 +181,25 @@ export function calculateTax2026(i:TaxInput){
   projectedNetCents:projectedNet,
   employerSocialSecurityCents:employeeSS,employerMedicareCents:medicare,
   ruleVersion:RULE_SET,canDisburse:false,
-  otherEmployerTaxesStatus:'not_calculated',bankVerified:false,
+  ...employer,bankVerified:false,
+ };
+}
+
+// FUTA credit eligibility is an employer fact, not inferred from Ohio residency.
+// Ohio's assigned total rate must include the technology/customer-service fee.
+export function calculateEmployerTaxes(gross:number,h:WageHistory,settings?:EmployerTaxSettings){
+ if(!settings)return {employerFutaCents:0,employerOhioUiCents:0,
+  otherEmployerTaxesStatus:'not_calculated' as const};
+ if(!settings.verified||settings.recordReference.trim().length<12||
+  !Number.isInteger(settings.ohioUiRateBps)||settings.ohioUiRateBps<0||settings.ohioUiRateBps>1500||
+  !Number.isInteger(settings.futaEffectiveRateBps)||settings.futaEffectiveRateBps<60||settings.futaEffectiveRateBps>600)
+  throw new Error('Verify assigned Ohio total UI rate and effective FUTA rate/credit evidence');
+ for(const amount of [h.priorFutaWagesCents,h.priorOhioUiWagesCents])
+  if(!Number.isSafeInteger(amount)||amount!<0||amount!>5_000_000_000)
+   throw new Error('Verify prior FUTA and Ohio UI wages for this legal employer and pay year');
+ return {
+  employerFutaCents:centsRatio(Math.min(gross,Math.max(0,700000-h.priorFutaWagesCents!)),settings.futaEffectiveRateBps),
+  employerOhioUiCents:centsRatio(Math.min(gross,Math.max(0,900000-h.priorOhioUiWagesCents!)),settings.ohioUiRateBps),
+  otherEmployerTaxesStatus:'calculated_from_verified_rates' as const,
  };
 }

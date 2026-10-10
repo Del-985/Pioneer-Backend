@@ -5,7 +5,7 @@ import {pool} from '../../db/pool.js';
 import {HttpError} from '../../lib/http-error.js';
 import {assertBusinessUnitPermission} from '../access/authorization.service.js';
 import {employeeSelf} from './employee-scheduling.service.js';
-import {calculateTax2026,type TaxInput,type Election,RULE_SET} from './payroll-tax-math.js';
+import {calculateTax2026,type TaxInput,type Election,type EmployerTaxSettings,RULE_SET} from './payroll-tax-math.js';
 
 const uuid=z.string().uuid();
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -14,6 +14,8 @@ const proof=z.string().trim().min(12).max(240);
 export const electionSchema=z.object({
  employeeId:uuid,effectiveOn:date,w4FormYear:z.number().int().min(2020).max(2026),
  federalStatus:z.enum(['single','married_joint','head_of_household']),
+ federalExempt:z.boolean().default(false),federalExemptionYear:z.number().int().min(2020).max(2026).optional(),
+ ohioExtraCents:safeCents.max(50000000).default(0),
  federalTwoJobs:z.boolean(),federalStep3CreditsCents:safeCents,
  federalStep4aIncomeCents:safeCents,federalStep4bDeductionsCents:safeCents,
  federalStep4cExtraCents:safeCents.max(50000000),
@@ -29,23 +31,35 @@ export const electionSchema=z.object({
   ctx.addIssue({code:'custom',message:'School district must be verified none or a specific taxing district'});
  if(x.schoolDistrictBasis!=='none'&&(x.schoolDistrictCode==='none'||x.schoolDistrictRateBps===0))
   ctx.addIssue({code:'custom',message:'Enter the verified school district code and rate'});
- if(x.schoolDistrictBasis==='traditional')
-  ctx.addIssue({code:'custom',message:'Traditional-base district withholding is not yet supported: use reviewed external calculations'});
+ if(x.federalExempt&&(x.federalExemptionYear!==2026||x.w4FormYear!==2026||
+   x.federalTwoJobs||x.federalStep3CreditsCents||x.federalStep4aIncomeCents||
+   x.federalStep4bDeductionsCents||x.federalStep4cExtraCents))
+  ctx.addIssue({code:'custom',message:'Exempt requires a signed 2026 W-4 and no steps 2–4 amounts'});
  if(!x.toledoWorkplaceConfirmed)
   ctx.addIssue({code:'custom',message:'This version supports exclusively wages verified as taxable to Toledo'});
 });
 export const openingSchema=z.object({
- employeeId:uuid,priorSocialSecurityWagesCents:safeCents,
+ employeeId:uuid,payDate:date,legalEmployerOnly:z.literal(true),
+ priorFutaWagesCents:safeCents,priorOhioUiWagesCents:safeCents,
+ priorSocialSecurityWagesCents:safeCents,
  priorMedicareWagesCents:safeCents,
  verifiedFromPayrollRecords:z.literal(true),recordReference:proof,
 }).strict();
+const employerTaxSchema=z.object({
+ ohioUiRateBps:z.number().int().min(0).max(1500),
+ futaEffectiveRateBps:z.number().int().min(60).max(600),
+ verified:z.literal(true),recordReference:proof,
+}).strict();
 export const taxPrepareSchema=z.object({
+ payDate:date,employerTaxes:employerTaxSchema,
+ regularPayrollVerified:z.literal(true),
  reimbursementsVerifiedNonTaxable:z.boolean().default(false),
  notes:z.string().trim().max(2000).optional(),
 }).strict();
 export const taxVoidSchema=z.object({reason:z.string().trim().min(12).max(1000)}).strict();
 type TaxElectionDB={
  id:string;employee_id:string;business_unit_id:string;legal_entity_id:string;
+ federal_exempt:boolean;federal_exemption_year:number|null;ohio_extra_cents:string;
  effective_on:string;w4_form_year:number;federal_status:Election['federalStatus'];
  federal_two_jobs:boolean;federal_step3_credits_cents:string;
  federal_step4a_income_cents:string;federal_step4b_deductions_cents:string;
@@ -57,7 +71,9 @@ type TaxElectionDB={
  employee_name?:string;
 };
 type OpeningDB={
- id:string;employee_id:string;prior_social_security_wages_cents:string;
+ id:string;employee_id:string;pay_date:string;legal_employer_only:boolean;
+ prior_futa_wages_cents:string|null;prior_ohio_ui_wages_cents:string|null;
+ prior_social_security_wages_cents:string;
  prior_medicare_wages_cents:string;record_reference:string;
  verified_from_payroll_records:boolean;
 };
@@ -74,7 +90,8 @@ type NativeLineDB={
 type TaxCalcDB={
  id:string;legal_entity_id:string;business_unit_id:string;payroll_run_id:string;
  native_calculation_id:string;status:string;source_digest:string;
- tax_rule_version:string;employee_count:number;
+ tax_rule_version:string;employee_count:number;pay_date:string|null;
+ employer_tax_settings:EmployerTaxSettings|null;employer_futa_cents:string|null;employer_ohio_ui_cents:string|null;
  gross_cents:string;federal_income_cents:string;ohio_income_cents:string;
  toledo_income_cents:string;school_income_cents:string;
  social_security_cents:string;medicare_cents:string;additional_medicare_cents:string;
@@ -85,6 +102,7 @@ type TaxCalcDB={
  period_start:string;period_end:string;
 };
 type TaxLineDB={
+ employer_futa_cents:string|null;employer_ohio_ui_cents:string|null;
  employee_id:string;employee_name:string;gross_cents:string;
  federal_income_cents:string;ohio_income_cents:string;toledo_income_cents:string;
  school_income_cents:string;social_security_cents:string;
@@ -101,7 +119,13 @@ const fNumber=(v:string)=>{const n=Number(v);
   'Stored payroll tax amount exceeded safe monetary limits.');
  return n;
 };
-const sha=(x:unknown)=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
+function canonical(x:unknown):unknown{
+ if(Array.isArray(x))return x.map(canonical);
+ if(x!==null&&typeof x==='object')return Object.fromEntries(
+  Object.entries(x).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,canonical(v)]));
+ return x;
+}
+const sha=(x:unknown)=>createHash('sha256').update(JSON.stringify(canonical(x))).digest('hex');
 function requireDate(x:string){
  const d=new Date(x+'T12:00:00Z');
  if(!Number.isFinite(d.getTime())||d.toISOString().slice(0,10)!==x)
@@ -123,6 +147,7 @@ async function scopedUnit(c:PoolClient,unit:string,employee:string){
  return q.rows[0].legal_entity_id;
 }
 const electionFields=`SELECT e.id,e.employee_id,e.business_unit_id,e.legal_entity_id,
+ e.federal_exempt,e.federal_exemption_year,e.ohio_extra_cents::text,
  e.effective_on::text,e.w4_form_year,e.federal_status,e.federal_two_jobs,
  e.federal_step3_credits_cents::text,e.federal_step4a_income_cents::text,
  e.federal_step4b_deductions_cents::text,e.federal_step4c_extra_cents::text,
@@ -133,6 +158,8 @@ const electionFields=`SELECT e.id,e.employee_id,e.business_unit_id,e.legal_entit
 function mapElection(e:TaxElectionDB){
  return{id:e.id,employeeId:e.employee_id,employeeName:e.employee_name,
   effectiveOn:e.effective_on,w4FormYear:e.w4_form_year,
+  federalExempt:e.federal_exempt,federalExemptionYear:e.federal_exemption_year,
+  ohioExtraCents:fNumber(e.ohio_extra_cents),
   federalStatus:e.federal_status,federalTwoJobs:e.federal_two_jobs,
   federalStep3CreditsCents:fNumber(e.federal_step3_credits_cents),
   federalStep4aIncomeCents:fNumber(e.federal_step4a_income_cents),
@@ -150,10 +177,14 @@ function mapElection(e:TaxElectionDB){
  };
 }
 export async function addElection(user:string,unit:string,
- input:z.infer<typeof electionSchema>){
+ input:z.input<typeof electionSchema>){
+ const parsed=electionSchema.parse(input);
+ input=parsed;
  await assertBusinessUnitPermission(user,unit,'payroll.tax.manage');
  requireDate(input.effectiveOn);
  return tx(async c=>{
+  // Serialize source changes and approvals in this business to avoid stale approvals.
+  await c.query('SELECT id FROM business_units WHERE id=$1 FOR UPDATE',[unit]);
   const entity=await scopedUnit(c,unit,input.employeeId);
   const existing=await c.query(`SELECT id FROM payroll_tax_elections
    WHERE employee_id=$1 AND effective_on=$2`,
@@ -168,9 +199,9 @@ export async function addElection(user:string,unit:string,
     federal_step4c_extra_cents,ohio_it4_exemptions,school_district_code,
     school_district_basis,school_district_rate_bps,toledo_workplace_confirmed,
     signed_federal_w4_on_file,signed_ohio_it4_on_file,verified_school_district,
-    record_reference,created_by_user_id)
+    record_reference,created_by_user_id,federal_exempt,federal_exemption_year,ohio_extra_cents)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
-    $17,$18,$19,$20,$21) RETURNING id`,
+    $17,$18,$19,$20,$21,$22,$23,$24) RETURNING id`,
    [entity,unit,input.employeeId,input.effectiveOn,input.w4FormYear,
     input.federalStatus,input.federalTwoJobs,input.federalStep3CreditsCents,
     input.federalStep4aIncomeCents,input.federalStep4bDeductionsCents,
@@ -178,7 +209,7 @@ export async function addElection(user:string,unit:string,
     input.schoolDistrictCode,input.schoolDistrictBasis,input.schoolDistrictRateBps,
     input.toledoWorkplaceConfirmed,input.signedFederalW4OnFile,
     input.signedOhioIt4OnFile,input.verifiedSchoolDistrict,
-    input.recordReference,user]);
+    input.recordReference,user,input.federalExempt??false,input.federalExemptionYear??null,input.ohioExtraCents??0]);
   await c.query(`INSERT INTO audit_log(actor_user_id,business_unit_id,action,
     resource_type,resource_id,metadata) VALUES($1,$2,'payroll.tax.election.saved',
     'payroll_tax_election',$3,$4::jsonb)`,[user,unit,added.rows[0]!.id,
@@ -212,7 +243,12 @@ async function getNative(c:PoolClient,unit:string,runId:string){
 export async function addOpening(user:string,unit:string,runId:string,
  input:z.infer<typeof openingSchema>){
  await assertBusinessUnitPermission(user,unit,'payroll.tax.manage');
+ openingSchema.parse(input);requireDate(input.payDate);
+ if(input.payDate<'2026-08-01'||input.payDate>'2026-12-31')
+  throw new HttpError(400,'TAX_PAY_DATE_UNSUPPORTED','Enter a supported 2026 actual pay date.');
  return tx(async c=>{
+  // Serialize source changes and approvals in this business to avoid stale approvals.
+  await c.query('SELECT id FROM business_units WHERE id=$1 FOR UPDATE',[unit]);
   const n=await getNative(c,unit,runId);
   const entity=await scopedUnit(c,unit,input.employeeId);
   if(entity!==n.legal_entity_id)throw new HttpError(409,'TAX_ENTITY_MISMATCH',
@@ -221,22 +257,23 @@ export async function addOpening(user:string,unit:string,runId:string,
    WHERE calculation_id=$1 AND employee_id=$2`,[n.id,input.employeeId]);
   if(!line.rows.length)throw new HttpError(404,'TAX_EMPLOYEE_NOT_ON_REGISTER',
    'Employee is not included in this payroll run.');
-  const exists=await c.query(`SELECT id FROM payroll_tax_opening_wages
-   WHERE payroll_run_id=$1 AND employee_id=$2`,[runId,input.employeeId]);
-  if(exists.rows.length)throw new HttpError(409,'TAX_OPENING_EXISTS',
-   'This employee already has a verified prior-wage record for this run.');
+  const existingTax=await findTax(c,unit,runId,true);
+  if(existingTax?.status==='approved')throw new HttpError(409,'TAX_APPROVED_LOCKED',
+   'Approved tax evidence cannot be replaced.');
   const added=await c.query<{id:string}>(`INSERT INTO payroll_tax_opening_wages(
    legal_entity_id,business_unit_id,payroll_run_id,employee_id,
    prior_social_security_wages_cents,prior_medicare_wages_cents,
-   record_reference,verified_from_payroll_records,created_by_user_id)
-   VALUES($1,$2,$3,$4,$5,$6,$7,true,$8) RETURNING id`,
+   record_reference,verified_from_payroll_records,created_by_user_id,
+   pay_date,prior_futa_wages_cents,prior_ohio_ui_wages_cents,legal_employer_only)
+   VALUES($1,$2,$3,$4,$5,$6,$7,true,$8,$9,$10,$11,true) RETURNING id`,
    [entity,unit,runId,input.employeeId,input.priorSocialSecurityWagesCents,
-    input.priorMedicareWagesCents,input.recordReference,user]);
+    input.priorMedicareWagesCents,input.recordReference,user,input.payDate,
+    input.priorFutaWagesCents,input.priorOhioUiWagesCents]);
   await c.query(`INSERT INTO audit_log(actor_user_id,business_unit_id,action,
     resource_type,resource_id,metadata) VALUES($1,$2,'payroll.tax.ytd.recorded',
     'payroll_tax_opening_wages',$3,$4::jsonb)`,
    [user,unit,added.rows[0]!.id,JSON.stringify({employeeId:input.employeeId,
-     runId,priorSocialSecurityWagesCents:input.priorSocialSecurityWagesCents,
+     runId,payDate:input.payDate,legalEmployerOnly:true,priorSocialSecurityWagesCents:input.priorSocialSecurityWagesCents,
      priorMedicareWagesCents:input.priorMedicareWagesCents})]);
   return{data:{id:added.rows[0]!.id}};
  });
@@ -244,21 +281,26 @@ export async function addOpening(user:string,unit:string,runId:string,
 export async function listOpenings(user:string,unit:string,runId:string){
  await assertBusinessUnitPermission(user,unit,'payroll.tax.read');
  const q=await pool.query<OpeningDB &{employee_name:string}>(`
-  SELECT o.id,o.employee_id,e.display_name AS employee_name,
+  SELECT o.id,o.employee_id,e.display_name AS employee_name,o.pay_date::text,
+   o.legal_employer_only,o.prior_futa_wages_cents::text,o.prior_ohio_ui_wages_cents::text,
    o.prior_social_security_wages_cents::text,
    o.prior_medicare_wages_cents::text,o.record_reference,
    o.verified_from_payroll_records
   FROM payroll_tax_opening_wages o JOIN employees e ON e.id=o.employee_id
   WHERE o.business_unit_id=$1 AND o.payroll_run_id=$2
-  ORDER BY e.display_name`,[unit,runId]);
+  ORDER BY e.display_name,o.created_at DESC,o.id DESC`,[unit,runId]);
  return{data:q.rows.map(x=>({id:x.id,employeeId:x.employee_id,
-  employeeName:x.employee_name,
+  employeeName:x.employee_name,payDate:x.pay_date,legalEmployerOnly:x.legal_employer_only,
+  current:q.rows.find(o=>o.employee_id===x.employee_id&&o.pay_date===x.pay_date)?.id===x.id,
+  priorFutaWagesCents:x.prior_futa_wages_cents===null?null:fNumber(x.prior_futa_wages_cents),
+  priorOhioUiWagesCents:x.prior_ohio_ui_wages_cents===null?null:fNumber(x.prior_ohio_ui_wages_cents),
   priorSocialSecurityWagesCents:fNumber(x.prior_social_security_wages_cents),
   priorMedicareWagesCents:fNumber(x.prior_medicare_wages_cents),
   recordReference:x.record_reference,verifiedFromPayrollRecords:x.verified_from_payroll_records}))};
 }
 const taxCalcColumns=`SELECT c.id,c.legal_entity_id,c.business_unit_id,
  c.payroll_run_id,c.native_calculation_id,c.status,c.source_digest,c.tax_rule_version,
+ c.pay_date::text,c.employer_tax_settings,c.employer_futa_cents::text,c.employer_ohio_ui_cents::text,
  c.employee_count,c.gross_cents::text,c.federal_income_cents::text,
  c.ohio_income_cents::text,c.toledo_income_cents::text,c.school_income_cents::text,
  c.social_security_cents::text,c.medicare_cents::text,
@@ -269,12 +311,14 @@ const taxCalcColumns=`SELECT c.id,c.legal_entity_id,c.business_unit_id,
  r.period_start::text,r.period_end::text
  FROM payroll_tax_calculations c JOIN payroll_runs r ON r.id=c.payroll_run_id`;
 const taxFields=[
+ 'employerFutaCents','employerOhioUiCents',
  'grossCents','federalIncomeCents','ohioIncomeCents','toledoIncomeCents',
  'schoolIncomeCents','socialSecurityCents','medicareCents','additionalMedicareCents',
  'totalWithholdingCents','voluntaryDeductionsCents','reimbursementCents',
  'projectedNetCents','employerSocialSecurityCents','employerMedicareCents',
 ] as const;
 const taxCols=[
+ 'employer_futa_cents','employer_ohio_ui_cents',
  'gross_cents','federal_income_cents','ohio_income_cents','toledo_income_cents',
  'school_income_cents','social_security_cents','medicare_cents',
  'additional_medicare_cents','total_withholding_cents','voluntary_deductions_cents',
@@ -293,20 +337,21 @@ function totals(lines:CalculatedLine[]){
 }
 function mapCalc(x:TaxCalcDB){
  const amount=Object.fromEntries(taxFields.map((key,i)=>
-  [key,fNumber(x[taxCols[i]!])]));
+  [key,x[taxCols[i]!]===null?null:fNumber(x[taxCols[i]!]!)]));
  return{id:x.id,runId:x.payroll_run_id,businessUnitId:x.business_unit_id,
   nativeCalculationId:x.native_calculation_id,status:x.status,
+  payDate:x.pay_date,employerTaxSettings:x.employer_tax_settings,
   taxRuleVersion:x.tax_rule_version,periodStart:x.period_start,periodEnd:x.period_end,
   employeeCount:x.employee_count,...amount,notes:x.notes,
   createdAt:x.created_at,approvedAt:x.approved_at,voidedAt:x.voided_at,
   paymentStatus:'not_processed',canDisburse:false,booksPaymentRecorded:false,
-  employerOtherTaxStatus:'not_calculated',taxReturnFiled:false,
+  employerOtherTaxStatus:x.employer_tax_settings?'calculated_from_verified_rates':'not_calculated',taxReturnFiled:false,
   projectedNetIsFinal:false};
 }
 function mapTaxLine(x:TaxLineDB){
  return{
   employeeId:x.employee_id,employeeName:x.employee_name,
-  ...Object.fromEntries(taxFields.map((key,i)=>[key,fNumber(x[taxCols[i]!])])),
+  ...Object.fromEntries(taxFields.map((key,i)=>[key,x[taxCols[i]!]===null?null:fNumber(x[taxCols[i]!]!)])),
   paymentStatus:'not_processed',canDisburse:false,netIsEstimated:true,
  };
 }
@@ -317,7 +362,8 @@ async function findTax(c:PoolClient,unit:string,run:string,lock=false){
  return q.rows[0]??null;
 }
 async function calcSource(c:PoolClient,unit:string,run:string,
- reimbVerified:boolean){
+ reimbVerified:boolean,payDate:string,employerTaxes:EmployerTaxSettings){
+ requireDate(payDate);
  const native=await getNative(c,unit,run);
  const end=native.period_end;
  const days=Math.round((Date.parse(end+'T12:00:00Z')-
@@ -325,9 +371,9 @@ async function calcSource(c:PoolClient,unit:string,run:string,
  const periods=days===7?52:days===14?26:0;
  if(!periods)throw new HttpError(409,'TAX_FREQUENCY_NOT_SUPPORTED',
   'Only weekly and biweekly payroll registers are supported.');
- if(end<'2026-08-01'||end>'2026-12-31')
+ if(payDate<'2026-08-01'||payDate>'2026-12-31'||payDate<end)
   throw new HttpError(409,'TAX_RULE_DATE_UNSUPPORTED',
-   '2026 withholding estimates support Ohio pay periods ending August 1 through December 31, 2026.');
+   'Actual pay date must be on or after the period end and between August 1 and December 31, 2026.');
  const q=await c.query<NativeLineDB>(`
   SELECT l.employee_id,e.display_name employee_name,
     l.gross_cents::text,l.voluntary_deduction_cents::text,
@@ -343,15 +389,17 @@ async function calcSource(c:PoolClient,unit:string,run:string,
  const elections=await c.query<TaxElectionDB>(electionFields+`
    FROM payroll_tax_elections e WHERE e.business_unit_id=$1
     AND e.legal_entity_id=$2 AND e.employee_id=ANY($3::uuid[])
-    AND e.effective_on<=(SELECT period_start FROM payroll_runs WHERE id=$4)
+    AND e.effective_on<=$4::date
    ORDER BY e.employee_id,e.effective_on DESC`,
-  [unit,native.legal_entity_id,ids,run]);
+  [unit,native.legal_entity_id,ids,payDate]);
  const openings=await c.query<OpeningDB>(`
-   SELECT id,employee_id,prior_social_security_wages_cents::text,
+   SELECT id,employee_id,pay_date::text,legal_employer_only,
+    prior_futa_wages_cents::text,prior_ohio_ui_wages_cents::text,prior_social_security_wages_cents::text,
     prior_medicare_wages_cents::text,record_reference,verified_from_payroll_records
    FROM payroll_tax_opening_wages WHERE payroll_run_id=$1 AND business_unit_id=$2
-    AND legal_entity_id=$3 AND employee_id=ANY($4::uuid[]) `,
-  [run,unit,native.legal_entity_id,ids]);
+    AND legal_entity_id=$3 AND employee_id=ANY($4::uuid[]) AND pay_date=$5
+   ORDER BY created_at DESC,id DESC`,
+  [run,unit,native.legal_entity_id,ids,payDate]);
  const lines:CalculatedLine[]=q.rows.map(x=>{
   const elect=elections.rows.find(e=>e.employee_id===x.employee_id);
   if(!elect)throw new HttpError(409,'TAX_ELECTION_MISSING',
@@ -359,14 +407,17 @@ async function calcSource(c:PoolClient,unit:string,run:string,
   if(elect.w4_form_year<2020||elect.w4_form_year>2026)
    throw new HttpError(409,'TAX_W4_LEGACY_NOT_SUPPORTED','Old W-4 form requires manual withholding review.');
   const prior=openings.rows.find(o=>o.employee_id===x.employee_id);
-  if(!prior?.verified_from_payroll_records)
+  if(!prior?.verified_from_payroll_records||!prior.legal_employer_only||
+    prior.prior_futa_wages_cents===null||prior.prior_ohio_ui_wages_cents===null)
    throw new HttpError(409,'TAX_YTD_MISSING',
-    'Verify each employee\'s prior calendar-year-to-date Social Security and Medicare wages first.');
+    'Verify each employee\'s prior wages paid by this legal employer, in the pay-date calendar year, before this payment.');
   if(!elect.signed_federal_w4_on_file||!elect.signed_ohio_it4_on_file||
     !elect.verified_school_district)
    throw new HttpError(409,'TAX_ELECTION_UNVERIFIED',
     'Signed federal and Ohio tax documents and residence district must be verified.');
   const election:Election={
+   federalExempt:elect.federal_exempt,...(elect.federal_exemption_year===null?{}:{federalExemptionYear:elect.federal_exemption_year}),
+   ohioExtraCents:fNumber(elect.ohio_extra_cents),
    federalStatus:elect.federal_status,federalTwoJobs:elect.federal_two_jobs,
    federalStep3CreditsCents:fNumber(elect.federal_step3_credits_cents),
    federalStep4aIncomeCents:fNumber(elect.federal_step4a_income_cents),
@@ -382,9 +433,8 @@ async function calcSource(c:PoolClient,unit:string,run:string,
   // Ohio treats bonuses and other nonrecurring supplemental wages under
   // separate withholding rules. Wage corrections may require prior-period
   // adjustment and tax reconciliation; do not guess their classification.
-  const unreviewable=adjustments.filter(a=>a.category==='wage_correction')
-    .reduce((n,a)=>n+a.amountCents,0);
-  if(unreviewable!==0)throw new HttpError(409,'TAX_CORRECTION_CLASSIFICATION_REQUIRED',
+  const unreviewable=adjustments.some(a=>a.category==='wage_correction'&&a.amountCents!==0);
+  if(unreviewable)throw new HttpError(409,'TAX_CORRECTION_CLASSIFICATION_REQUIRED',
     'Posted wage corrections require independent payroll tax classification before using this preview.');
   const ohioSupplementalWagesCents=adjustments
     .filter(a=>a.category==='bonus'||a.category==='retro_pay')
@@ -400,8 +450,9 @@ async function calcSource(c:PoolClient,unit:string,run:string,
    voluntaryDeductionsCents:fNumber(x.voluntary_deduction_cents),
    reimbursementCents:fNumber(x.reimbursement_cents),
    reimbursementsVerifiedNonTaxable:reimbVerified,
-   payPeriods:periods,periodEnd:end,periodYear:2026,election,
-   history:{priorSocialSecurityWagesCents:fNumber(prior.prior_social_security_wages_cents),
+   payPeriods:periods,payDate,employerTaxes,election,
+   history:{priorFutaWagesCents:fNumber(prior.prior_futa_wages_cents),
+    priorOhioUiWagesCents:fNumber(prior.prior_ohio_ui_wages_cents),priorSocialSecurityWagesCents:fNumber(prior.prior_social_security_wages_cents),
     priorMedicareWagesCents:fNumber(prior.prior_medicare_wages_cents)},
   };
   try{return{...calculateTax2026(input),employeeId:x.employee_id,
@@ -413,7 +464,7 @@ async function calcSource(c:PoolClient,unit:string,run:string,
  return{native,lines,result,reimbVerified,
   digest:sha({version:RULE_SET,source:native.source_digest,nativeId:native.id,
    periodStart:native.period_start,periodEnd:native.period_end,
-   reimbVerified,lines})};
+   payDate,employerTaxes,reimbVerified,lines})};
 }
 async function audit(c:PoolClient,user:string,unit:string,id:string,action:
  'prepared'|'approved'|'voided',metadata:Record<string,unknown>){
@@ -426,15 +477,18 @@ async function audit(c:PoolClient,user:string,unit:string,id:string,action:
   [user,unit,'payroll.tax.'+action,id,JSON.stringify(metadata)]);
 }
 export async function prepareTax(user:string,unit:string,run:string,
- input:z.infer<typeof taxPrepareSchema>){
+ input:z.input<typeof taxPrepareSchema>){
+ const settings=taxPrepareSchema.parse(input);
  await assertBusinessUnitPermission(user,unit,'payroll.tax.manage');
  return tx(async c=>{
+  // Serialize source changes and approvals in this business to avoid stale approvals.
+  await c.query('SELECT id FROM business_units WHERE id=$1 FOR UPDATE',[unit]);
   const native=await getNative(c,unit,run);
   const existing=await findTax(c,unit,run,true);
   if(existing)throw new HttpError(409,'TAX_ALREADY_PREPARED',
    'This payroll already has a tax preview. Void its draft to replace it.');
   const reimbursementsVerifiedNonTaxable=input.reimbursementsVerifiedNonTaxable===true;
-  const source=await calcSource(c,unit,run,reimbursementsVerifiedNonTaxable);
+  const source=await calcSource(c,unit,run,reimbursementsVerifiedNonTaxable,settings.payDate,settings.employerTaxes);
   const amount=taxFields.map(k=>source.result[k]);
   const cols=[...taxCols];
   const placeholders=cols.map((_,i)=>'$'+(i+8)).join(',');
@@ -444,12 +498,12 @@ export async function prepareTax(user:string,unit:string,run:string,
     INSERT INTO payroll_tax_calculations(
       legal_entity_id,business_unit_id,payroll_run_id,native_calculation_id,
       source_digest,tax_rule_version,employee_count,
-      ${cols.join(',')},notes,created_by_user_id)
+      ${cols.join(',')},notes,created_by_user_id,pay_date,employer_tax_settings)
     VALUES($1,$2,$3,$4,$5,$6,$7,
-      ${placeholders},${notesParam},${actorParam})
+      ${placeholders},${notesParam},${actorParam},$${10+cols.length},$${11+cols.length}::jsonb)
     RETURNING id`,
     [native.legal_entity_id,unit,run,native.id,source.digest,RULE_SET,
-      source.lines.length,...amount,input.notes??null,user]);
+      source.lines.length,...amount,input.notes??null,user,settings.payDate,JSON.stringify(settings.employerTaxes)]);
   const id=q.rows[0]!.id;
   for(const line of source.lines){
    await c.query(`INSERT INTO payroll_tax_employee_lines(
@@ -461,6 +515,7 @@ export async function prepareTax(user:string,unit:string,run:string,
   }
   await audit(c,user,unit,id,'prepared',{runId:run,taxRuleVersion:RULE_SET,
     employeeCount:source.lines.length,reimbursementsVerifiedNonTaxable,
+    payDate:settings.payDate,regularPayrollVerified:true,employerTaxes:settings.employerTaxes,
     taxesComputed:true,paymentsEnabled:false});
   return{data:{id,runId:run,status:'draft',...source.result,
     canDisburse:false,projectedNetIsFinal:false}};
@@ -469,6 +524,8 @@ export async function prepareTax(user:string,unit:string,run:string,
 export async function approveTax(user:string,unit:string,run:string){
  await assertBusinessUnitPermission(user,unit,'payroll.tax.approve');
  return tx(async c=>{
+  // Serialize source changes and approvals in this business to avoid stale approvals.
+  await c.query('SELECT id FROM business_units WHERE id=$1 FOR UPDATE',[unit]);
   const existing=await findTax(c,unit,run,true);
   if(!existing)throw new HttpError(404,'TAX_PREVIEW_NOT_FOUND',
    'Prepare a native withholding preview first.');
@@ -478,15 +535,18 @@ export async function approveTax(user:string,unit:string,run:string){
     SELECT metadata FROM payroll_tax_events
     WHERE calculation_id=$1 AND action='prepared'
     ORDER BY created_at LIMIT 1`,[existing.id]);
+  if(!existing.pay_date||!existing.employer_tax_settings)
+   throw new HttpError(409,'TAX_LEGACY_DRAFT','Void this older draft and recalculate with payday and employer rates.');
   const source=await calcSource(c,unit,run,
-    prepared.rows[0]?.metadata.reimbursementsVerifiedNonTaxable??false);
+    prepared.rows[0]?.metadata.reimbursementsVerifiedNonTaxable??false,
+    existing.pay_date,existing.employer_tax_settings);
   if(source.digest!==existing.source_digest||source.native.id!==existing.native_calculation_id)
    throw new HttpError(409,'TAX_SOURCE_CHANGED',
     'The verified tax inputs have changed. Void this draft and recalculate.');
   await c.query(`UPDATE payroll_tax_calculations SET status='approved',
     approved_at=now(),approved_by_user_id=$2 WHERE id=$1`,[existing.id,user]);
   await audit(c,user,unit,existing.id,'approved',{runId:run,
-    paymentsEnabled:false,taxReturnsFiled:false,employerOtherTaxesStatus:'not_calculated'});
+    paymentsEnabled:false,taxReturnsFiled:false,employerOtherTaxesStatus:'calculated_from_verified_rates'});
   return{data:{id:existing.id,runId:run,status:'approved',
     canDisburse:false,projectedNetIsFinal:false}};
  });
@@ -495,6 +555,8 @@ export async function voidTax(user:string,unit:string,run:string,
  input:z.infer<typeof taxVoidSchema>){
  await assertBusinessUnitPermission(user,unit,'payroll.tax.manage');
  return tx(async c=>{
+  // Serialize source changes and approvals in this business to avoid stale approvals.
+  await c.query('SELECT id FROM business_units WHERE id=$1 FOR UPDATE',[unit]);
   const existing=await findTax(c,unit,run,true);
   if(!existing)throw new HttpError(404,'TAX_PREVIEW_NOT_FOUND','Tax preview not found.');
   if(existing.status!=='draft')throw new HttpError(409,'TAX_APPROVED_LOCKED',
@@ -532,8 +594,8 @@ export async function taxDetail(user:string,unit:string,run:string){
 export async function employeeTaxPreview(user:string,unit:string){
  const employeeId=await employeeSelf(user,unit);
  const q=await pool.query<TaxLineDB&{
-  id:string;period_start:string;period_end:string;tax_rule_version:string
- }>(`SELECT c.id,r.period_start::text,r.period_end::text,
+  id:string;pay_date:string|null;employer_tax_settings:EmployerTaxSettings|null;period_start:string;period_end:string;tax_rule_version:string
+ }>(`SELECT c.id,c.pay_date::text,c.employer_tax_settings,r.period_start::text,r.period_end::text,
   c.tax_rule_version,l.employee_id,e.display_name AS employee_name,
   ${taxCols.map(k=>'l.'+k+'::text').join(',')}
   FROM payroll_tax_employee_lines l
@@ -542,9 +604,9 @@ export async function employeeTaxPreview(user:string,unit:string){
   JOIN employees e ON e.id=l.employee_id
   WHERE l.business_unit_id=$1 AND l.employee_id=$2
   ORDER BY r.period_start DESC LIMIT 50`,[unit,employeeId]);
- return{data:q.rows.map(x=>({calculationId:x.id,periodStart:x.period_start,
+ return{data:q.rows.map(x=>({calculationId:x.id,payDate:x.pay_date,periodStart:x.period_start,
   periodEnd:x.period_end,taxRuleVersion:x.tax_rule_version,
   ...mapTaxLine(x),officialPayStub:false,canDisburse:false,
-  projectedNetIsFinal:false,employerOtherTaxesStatus:'not_calculated',
+  projectedNetIsFinal:false,employerOtherTaxesStatus:x.employer_tax_settings?'calculated_from_verified_rates':'not_calculated',
  }))};
 }
