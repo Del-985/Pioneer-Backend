@@ -10,7 +10,7 @@ import {
 
 const id={
   entity:randomUUID(),firstUnit:randomUUID(),otherUnit:randomUUID(),
-  employeeUser:randomUUID(),otherUser:randomUUID(),manager:randomUUID(),
+  employeeUser:randomUUID(),otherUser:randomUUID(),manager:randomUUID(),viewer:randomUUID(),
   employee:randomUUID(),otherEmployee:randomUUID(),
 };
 function isError(code:number){
@@ -23,7 +23,7 @@ after(async()=>{
     await pool.query('DELETE FROM user_role_assignments WHERE user_id=$1',[id.manager]);
     await pool.query('DELETE FROM employees WHERE id = ANY($1::uuid[])',[[id.employee,id.otherEmployee]]);
     await pool.query('DELETE FROM users WHERE id = ANY($1::uuid[])',
-      [[id.employeeUser,id.otherUser,id.manager]]);
+      [[id.employeeUser,id.otherUser,id.manager,id.viewer]]);
     await pool.query('DELETE FROM business_units WHERE id = ANY($1::uuid[])',[[id.firstUnit,id.otherUnit]]);
     await pool.query('DELETE FROM legal_entities WHERE id=$1',[id.entity]);
   }finally{
@@ -39,14 +39,16 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
     VALUES($1,$3,'Time Unit 1',$4),($2,$3,'Time Unit 2',$5)`,
     [id.firstUnit,id.otherUnit,id.entity,slug+'-1',slug+'-2']);
   await pool.query(`INSERT INTO users(id,email,display_name) VALUES
-    ($1,$4,'Test Worker'),($2,$5,'Other Worker'),($3,$6,'Test Manager')`,
-    [id.employeeUser,id.otherUser,id.manager,slug+'-worker@example.com',
-      slug+'-other@example.com',slug+'-manager@example.com']);
+    ($1,$5,'Test Worker'),($2,$6,'Other Worker'),($3,$7,'Test Manager'),($4,$8,'Business Viewer')`,
+    [id.employeeUser,id.otherUser,id.manager,id.viewer,slug+'-worker@example.com',
+      slug+'-other@example.com',slug+'-manager@example.com',slug+'-viewer@example.com']);
   await pool.query(`INSERT INTO employees(id,business_unit_id,user_id,display_name,employee_number)
     VALUES($1,$3,$5,'Test Worker','TIME-01'),($2,$4,$6,'Other Worker','TIME-02')`,
     [id.employee,id.otherEmployee,id.firstUnit,id.otherUnit,id.employeeUser,id.otherUser]);
   await pool.query(`INSERT INTO user_role_assignments(user_id,role_id,business_unit_id)
     SELECT $1,id,$2 FROM roles WHERE key='business_admin'`,[id.manager,id.firstUnit]);
+  await pool.query(`INSERT INTO user_role_assignments(user_id,role_id,business_unit_id)
+    SELECT $1,id,$2 FROM roles WHERE key='business_viewer'`,[id.viewer,id.firstUnit]);
 
   const start=(await clockIn(id.employeeUser,{businessUnitId:id.firstUnit})).data;
   assert.equal(start.reviewStatus,'open');
@@ -81,6 +83,8 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
   assert.equal(own.data.activeEntry,null);
   await assert.rejects(getEmployeeTimesheet(id.otherUser,id.firstUnit,week),isError(403));
   await assert.rejects(getAdminTimesheets(id.manager,id.otherUnit,{weekStart:week}),isError(403));
+  await assert.rejects(getAdminTimesheets(id.viewer,id.firstUnit,{weekStart:week}),isError(403));
+
 
   const approved=(await reviewTimeEntry(id.manager,id.firstUnit,start.id,
     {decision:'approve',reason:'Verified against dispatch records'})).data;
@@ -159,6 +163,14 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
   assert.equal(resolved.reviewStatus,'submitted');
   assert.equal(resolved.workedSeconds,4*3600);
   assert.equal((await getEmployeeTimesheet(id.employeeUser,id.firstUnit,week)).data.activeEntry,null);
+
+  await assert.rejects(manualTimeEntry(id.manager,id.firstUnit,{
+    employeeId:id.employee,
+    clockInAt:new Date(Date.now()+3600000).toISOString(),
+    clockOutAt:new Date(Date.now()+7200000).toISOString(),
+    reason:'Should not allow recording hours from a future shift',
+    unpaidBreakMinutes:0,paidBreakMinutes:0,
+  }),isError(400));
 
   // An open shift is never silently finalized merely because it exceeds 16 hours.
   const artificial=mapTimeEntry({
