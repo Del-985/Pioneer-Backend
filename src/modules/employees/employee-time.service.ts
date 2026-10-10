@@ -226,6 +226,7 @@ export async function clockIn(userId:string,input:z.infer<typeof clockInSchema>)
     await checkedShift(c,employeeId,input.businessUnitId,input.shiftId);
     await checkedJob(c,employeeId,input.businessUnitId,input.workOrderId);
     const now=new Date();
+    await assertNoOverlap(c,employeeId,now,new Date(now.getTime()+1000));
     const r=await c.query<IdRow>(`
       INSERT INTO employee_time_entries(business_unit_id,employee_id,employee_shift_id,
        work_order_id,clock_in_at) VALUES($1,$2,$3,$4,$5) RETURNING id`,
@@ -263,7 +264,7 @@ export async function endBreak(userId:string,businessUnitId:string){
 export async function clockOut(userId:string,businessUnitId:string){
   return transaction(async c=>{
     const entry=await lockOpenEntry(c,userId,businessUnitId);
-    const now=new Date();
+    const now=new Date(Math.max(Date.now(),entry.clock_in_at.getTime()+1));
     const seconds=entry.active_break_started_at?
       secondsBetween(entry.active_break_started_at,now):0;
     await c.query(`UPDATE employee_time_entries SET clock_out_at=$2,
@@ -315,8 +316,9 @@ async function lockEntry(c:PoolClient,businessUnitId:string,id:string){
 function validateCorrection(start:Date,end:Date,unpaid:number,paid:number){
   const duration=secondsBetween(start,end);
   if(!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||
-    end<=start||duration>48*3600)
-    throw new HttpError(400,'INVALID_TIME_RANGE','Time entries must have a positive duration of no more than 48 hours.');
+    end<=start||duration>48*3600 || end.getTime()>Date.now()+5*60000)
+    throw new HttpError(400,'INVALID_TIME_RANGE',
+      'Time entries must have a positive duration of no more than 48 hours and cannot end in the future.');
   if(unpaid+paid>duration)
     throw new HttpError(400,'BREAK_EXCEEDS_SHIFT','Break time cannot exceed the shift duration.');
 }
@@ -373,6 +375,10 @@ export async function managerCloseOpenTime(
     if(old.clock_out_at)throw new HttpError(409,'ALREADY_CLOSED','This time entry is already closed.');
     const start=input.clockInAt?new Date(input.clockInAt):old.clock_in_at;
     const end=new Date(input.clockOutAt!);
+    if(old.active_break_started_at && end<old.active_break_started_at &&
+       input.paidBreakMinutes===undefined && input.unpaidBreakMinutes===undefined)
+      throw new HttpError(400,'BREAK_AFTER_CLOCK_OUT',
+        'The recorded break starts after this clock-out time; supply corrected break minutes.');
     const additional=old.active_break_started_at?
       secondsBetween(old.active_break_started_at,end):0;
     const unpaid=input.unpaidBreakMinutes!==undefined?input.unpaidBreakMinutes*60:
