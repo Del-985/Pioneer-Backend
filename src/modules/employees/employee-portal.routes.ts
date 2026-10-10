@@ -36,6 +36,7 @@ employeePortalRouter.get('/capabilities', async (_req, res) => {
 
 employeePortalRouter.get('/me', async (req, res) => {
   const actor = req.auth!;
+  res.setHeader('Cache-Control', 'private, no-store');
   res.json({ data: await employeeProfile(actor.userId, actor) });
 });
 
