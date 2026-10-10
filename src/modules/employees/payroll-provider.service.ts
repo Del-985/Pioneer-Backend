@@ -277,12 +277,27 @@ export async function recordProviderSubmission(user:string,unit:string,run:strin
       throw new HttpError(409,'PROVIDER_ALREADY_SUBMITTED',
         'A provider reference is already recorded for this payroll. Duplicate submissions are blocked.');
     }
-    const result=await c.query(`
-      UPDATE payroll_provider_batches SET status='submitted',
+    if(input.submittedOn<b.period_start)
+      throw new HttpError(400,'PROVIDER_SUBMISSION_DATE',
+        'Provider submission cannot predate the payroll work period.');
+    const duplicate=await c.query(`SELECT id FROM payroll_provider_batches
+      WHERE legal_entity_id=$1 AND lower(provider_name)=lower($2)
+        AND lower(external_reference)=lower($3) AND id<>$4 LIMIT 1`,
+      [b.legal_entity_id,b.provider_name,input.externalReference,b.id]);
+    if(duplicate.rows.length)throw new HttpError(409,'PROVIDER_REFERENCE_ALREADY_USED',
+      'This external provider reference is already recorded for another payroll batch.');
+    try{
+      await c.query(`UPDATE payroll_provider_batches SET status='submitted',
         external_reference=$3,provider_submitted_on=$4,
         submitted_at=now(),submitted_by_user_id=$5
-      WHERE id=$1 AND business_unit_id=$2`,
-      [b.id,unit,input.externalReference,input.submittedOn,user]);
+        WHERE id=$1 AND business_unit_id=$2`,
+        [b.id,unit,input.externalReference,input.submittedOn,user]);
+    }catch(error){
+      if((error as {code?:string}).code==='23505')
+        throw new HttpError(409,'PROVIDER_REFERENCE_ALREADY_USED',
+          'This external provider reference has already been recorded.');
+      throw error;
+    }
     await audit(c,user,b,'submission_recorded',{
       externalReference:input.externalReference,submittedOn:input.submittedOn,
       integrationType:'manual_external',automaticallyTransmitted:false});
