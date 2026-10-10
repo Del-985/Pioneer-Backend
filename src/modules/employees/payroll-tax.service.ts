@@ -395,9 +395,7 @@ async function calcSource(c:PoolClient,unit:string,run:string,
  return{native,lines,result,reimbVerified,
   digest:sha({version:RULE_SET,source:native.source_digest,nativeId:native.id,
    periodStart:native.period_start,periodEnd:native.period_end,
-   reimbVerified,lines:lines.map(x=>({
-    employeeId:x.employeeId,electionId:x.electionId,openingId:x.openingId,...x,
-   }))})};
+   reimbVerified,lines})};
 }
 async function audit(c:PoolClient,user:string,unit:string,id:string,action:
  'prepared'|'approved'|'voided',metadata:Record<string,unknown>){
