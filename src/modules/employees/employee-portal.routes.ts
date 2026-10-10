@@ -1,3 +1,4 @@
+import {employeeProviderStatements} from './payroll-provider.service.js';
 import {employeePostedAdjustments} from './payroll-adjustments.service.js';
 import express, { Router } from 'express';
 import { isObjectStorageConfigured } from '../bookkeeping/object-storage.service.js';
@@ -183,4 +184,10 @@ employeePortalRouter.get('/pay/statements',async(req,res)=>{
 employeePortalRouter.get('/pay/adjustments',async(req,res)=>{
   const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.query);
   res.json(await employeePostedAdjustments(req.auth!.userId,businessUnitId));
+});
+
+employeePortalRouter.get('/pay/provider-statements',async(req,res)=>{
+  const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.query);
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(await employeeProviderStatements(req.auth!.userId,businessUnitId));
 });
