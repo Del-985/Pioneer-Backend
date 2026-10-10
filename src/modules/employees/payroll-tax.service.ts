@@ -342,9 +342,9 @@ async function calcSource(c:PoolClient,unit:string,run:string,
  const elections=await c.query<TaxElectionDB>(electionFields+`
    FROM payroll_tax_elections e WHERE e.business_unit_id=$1
     AND e.legal_entity_id=$2 AND e.employee_id=ANY($3::uuid[])
-    AND e.effective_on<$4::date
+    AND e.effective_on<=(SELECT period_start FROM payroll_runs WHERE id=$5)
    ORDER BY e.employee_id,e.effective_on DESC`,
-  [unit,native.legal_entity_id,ids,end]);
+  [unit,native.legal_entity_id,ids,end,run]);
  const openings=await c.query<OpeningDB>(`
    SELECT id,employee_id,prior_social_security_wages_cents::text,
     prior_medicare_wages_cents::text,record_reference,verified_from_payroll_records
