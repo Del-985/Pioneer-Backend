@@ -84,3 +84,19 @@ test('Unsupported jurisdictions, missing YTD, odd periods and unsafe withholding
  assert.throws(()=>calculateTax2026({...make(10000),voluntaryDeductionsCents:20000}));
  assert.equal(centsRatio(199,250),5);
 });
+
+test('Ohio 2026 supplemental bonus withholding uses 2.75% instead of regular wage formula',()=>{
+ const flat=calculateTax2026(make(100000));
+ const supplement=calculateTax2026({
+   ...make(100000),ohioSupplementalWagesCents:20000,
+ });
+ assert.equal(supplement.ohioSupplementalWagesCents,20000);
+ assert.equal(supplement.ohioIncomeCents,1790);
+ assert.equal(flat.ohioIncomeCents,1560);
+ assert.equal(supplement.federalIncomeCents,flat.federalIncomeCents);
+ assert.equal(supplement.toledoIncomeCents,flat.toledoIncomeCents);
+ assert.equal(supplement.socialSecurityCents,flat.socialSecurityCents);
+ assert.throws(()=>calculateTax2026({
+   ...make(100000),ohioSupplementalWagesCents:100001,
+ }),/supplemental wages/i);
+});
