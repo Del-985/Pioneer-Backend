@@ -17,6 +17,10 @@ import {
  listShifts, respondToShift, shiftResponseSchema,
 } from './employee-scheduling.service.js';
 import { listRoutesForEmployee } from './employee-routes.service.js';
+import {
+  timeQuerySchema,clockInSchema,beginBreakSchema,getEmployeeTimesheet,
+  clockIn,startBreak,endBreak,clockOut,
+} from './employee-time.service.js';
 
 export const employeePortalRouter = Router();
 employeePortalRouter.use(requireAuth);
@@ -99,4 +103,25 @@ employeePortalRouter.post('/shifts/:shiftId/respond',async(req,res)=>{
 employeePortalRouter.get('/routes',async(req,res)=>{
   const {businessUnitId}=unitQuery.parse(req.query);
   res.json(await listRoutesForEmployee(req.auth!.userId,businessUnitId));
+});
+
+employeePortalRouter.get('/time',async(req,res)=>{
+  const input=timeQuerySchema.parse(req.query);
+  res.json(await getEmployeeTimesheet(req.auth!.userId,input.businessUnitId,input.weekStart));
+});
+employeePortalRouter.post('/time/clock-in',async(req,res)=>{
+  res.status(201).json(await clockIn(req.auth!.userId,clockInSchema.parse(req.body)));
+});
+employeePortalRouter.post('/time/break/start',async(req,res)=>{
+  const {businessUnitId,paid}=timeQuerySchema.pick({businessUnitId:true})
+    .extend({paid:beginBreakSchema.shape.paid}).parse(req.body);
+  res.json(await startBreak(req.auth!.userId,businessUnitId,paid));
+});
+employeePortalRouter.post('/time/break/end',async(req,res)=>{
+  const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.body);
+  res.json(await endBreak(req.auth!.userId,businessUnitId));
+});
+employeePortalRouter.post('/time/clock-out',async(req,res)=>{
+  const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.body);
+  res.json(await clockOut(req.auth!.userId,businessUnitId));
 });
