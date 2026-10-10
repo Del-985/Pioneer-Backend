@@ -69,6 +69,7 @@ type NativeRow={
 type NativeLineDB={
  employee_id:string;employee_name:string;gross_cents:string;
  voluntary_deduction_cents:string;reimbursement_cents:string;
+ adjustment_details:Array<{adjustmentId:string;category:string;amountCents:number;description:string}>;
 };
 type TaxCalcDB={
  id:string;legal_entity_id:string;business_unit_id:string;payroll_run_id:string;
@@ -330,7 +331,7 @@ async function calcSource(c:PoolClient,unit:string,run:string,
  const q=await c.query<NativeLineDB>(`
   SELECT l.employee_id,e.display_name employee_name,
     l.gross_cents::text,l.voluntary_deduction_cents::text,
-    l.reimbursement_cents::text
+    l.reimbursement_cents::text,l.adjustment_details
   FROM payroll_native_employee_lines l
   JOIN employees e ON e.id=l.employee_id AND e.business_unit_id=l.business_unit_id
   WHERE l.calculation_id=$1 AND l.business_unit_id=$2
@@ -377,8 +378,25 @@ async function calcSource(c:PoolClient,unit:string,run:string,
    schoolDistrictRateBps:elect.school_district_rate_bps,
    toledoWorkplaceConfirmed:elect.toledo_workplace_confirmed,
   };
+  const adjustments=x.adjustment_details??[];
+  // Ohio treats bonuses and other nonrecurring supplemental wages under
+  // separate withholding rules. Wage corrections may require prior-period
+  // adjustment and tax reconciliation; do not guess their classification.
+  const unreviewable=adjustments.filter(a=>a.category==='wage_correction')
+    .reduce((n,a)=>n+a.amountCents,0);
+  if(unreviewable!==0)throw new HttpError(409,'TAX_CORRECTION_CLASSIFICATION_REQUIRED',
+    'Posted wage corrections require independent payroll tax classification before using this preview.');
+  const ohioSupplementalWagesCents=adjustments
+    .filter(a=>a.category==='bonus'||a.category==='retro_pay')
+    .reduce((n,a)=>n+a.amountCents,0);
+  if(!Number.isSafeInteger(ohioSupplementalWagesCents)||
+    ohioSupplementalWagesCents<0||
+    ohioSupplementalWagesCents>fNumber(x.gross_cents))
+    throw new HttpError(409,'TAX_SUPPLEMENTAL_INVALID',
+      'Supplemental compensation is invalid or exceeds gross wages.');
   const input:TaxInput={
    grossCents:fNumber(x.gross_cents),
+   ohioSupplementalWagesCents,
    voluntaryDeductionsCents:fNumber(x.voluntary_deduction_cents),
    reimbursementCents:fNumber(x.reimbursement_cents),
    reimbursementsVerifiedNonTaxable:reimbVerified,
