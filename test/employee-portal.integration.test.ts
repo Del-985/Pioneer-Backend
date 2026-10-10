@@ -6,6 +6,10 @@ import { employeeJob, employeeJobs, employeeProfile } from '../src/modules/emplo
 import { getMyReport,updateMyJob,reviewReport } from '../src/modules/employees/employee-field.service.js';
 import { saveAvailability,listAvailability,respondToShift } from '../src/modules/employees/employee-scheduling.service.js';
 import { createRoute } from '../src/modules/employees/employee-routes.service.js';
+import {
+  newPhotoIntent,storeEmployeePhotoContent,employeePhotoContent,adminPhotoContent,
+  employeeReportPhotos,adminReportPhotos,inspectFieldPhoto,
+} from '../src/modules/employees/employee-photos.service.js';
 
 const ids = {
   entity: randomUUID(),
@@ -123,9 +127,51 @@ test('employee self-service enforces identity, assignment, status and business-u
   );
   assert.equal((await updateMyJob(ids.staff, ids.assignedJob, { action:'acknowledge' })).data.status,'acknowledged');
   assert.equal((await updateMyJob(ids.staff, ids.assignedJob, { action:'start' })).data.status,'in_progress');
+  // Database fallback stores the actual bytes and keeps photo access scoped.
+  const imageBytes=Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/jF8AAAAASUVORK5CYII=',
+    'base64'
+  );
+  assert.equal(inspectFieldPhoto(imageBytes,'image/png'),true);
+  assert.equal(inspectFieldPhoto(Buffer.alloc(imageBytes.length),'image/png'),false);
+  const intent=await newPhotoIntent(ids.staff,ids.assignedJob,{
+    kind:'before',fileName:'driveway.png',contentType:'image/png',byteSize:imageBytes.length,
+  });
+  assert.equal(intent.data.storageProvider,'database');
+  assert.equal(intent.data.uploadMethod,'POST');
+  assert.ok(intent.data.uploadPath);
+  await assert.rejects(
+    employeePhotoContent(ids.staff,intent.data.id),
+    (error:unknown)=>typeof error==='object'&&error!==null&&'statusCode' in error&&error.statusCode===404
+  );
+  await assert.rejects(
+    storeEmployeePhotoContent(ids.staff,intent.data.id,Buffer.alloc(imageBytes.length)),
+    (error:unknown)=>typeof error==='object'&&error!==null&&'statusCode' in error&&error.statusCode===400
+  );
+  await assert.rejects(
+    storeEmployeePhotoContent(ids.otherUser,intent.data.id,imageBytes),
+    (error:unknown)=>typeof error==='object'&&error!==null&&'statusCode' in error&&error.statusCode===404
+  );
+  assert.equal((await storeEmployeePhotoContent(ids.staff,intent.data.id,imageBytes)).data.uploaded,true);
+  assert.deepEqual((await employeePhotoContent(ids.staff,intent.data.id)).content,imageBytes);
+  assert.equal((await employeeReportPhotos(ids.staff,ids.assignedJob)).data[0]?.downloadUrl,
+    '/api/employee/photos/'+intent.data.id+'/content');
+  assert.deepEqual((await adminPhotoContent(ids.manager,ids.firstUnit,intent.data.id)).content,imageBytes);
+  assert.equal((await adminReportPhotos(ids.manager,ids.firstUnit,
+    (await getMyReport(ids.staff,ids.assignedJob)).data!.id)).data.length,1);
+  await assert.rejects(
+    adminPhotoContent(ids.manager,ids.secondUnit,intent.data.id),
+    (error:unknown)=>typeof error==='object'&&error!==null&&'statusCode' in error&&error.statusCode===403
+  );
   assert.equal((await updateMyJob(ids.staff, ids.assignedJob, {
     action:'submit',completionNotes:'Driveway cleared',saltApplied:true,saltAmountLbs:3,
   })).data.status,'submitted');
+  await assert.rejects(
+    newPhotoIntent(ids.staff,ids.assignedJob,{
+      kind:'after',fileName:'after.png',contentType:'image/png',byteSize:imageBytes.length,
+    }),
+    (error:unknown)=>typeof error==='object'&&error!==null&&'statusCode' in error&&error.statusCode===409
+  );
   assert.equal((await getMyReport(ids.staff, ids.assignedJob)).data?.status,'submitted');
   assert.equal((await pool.query<{status:string}>('SELECT status FROM work_orders WHERE id=$1',
     [ids.assignedJob])).rows[0]?.status,'in_progress',
