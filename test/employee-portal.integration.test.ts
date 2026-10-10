@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test, { after } from 'node:test';
 import { pool } from '../src/db/pool.js';
 import { employeeJob, employeeJobs, employeeProfile } from '../src/modules/employees/employee-portal.service.js';
+import { setPayrollRate } from '../src/modules/employees/payroll.service.js';
 import { getMyReport,updateMyJob,reviewReport } from '../src/modules/employees/employee-field.service.js';
 import { saveAvailability,listAvailability,respondToShift } from '../src/modules/employees/employee-scheduling.service.js';
 import { createRoute } from '../src/modules/employees/employee-routes.service.js';
@@ -32,6 +33,8 @@ after(async () => {
   try {
     await pool.query('DELETE FROM work_orders WHERE id = ANY($1::uuid[])',
       [[ids.assignedJob, ids.otherJob, ids.otherUnitJob]]);
+    await pool.query('DELETE FROM payroll_hourly_rates WHERE employee_id = ANY($1::uuid[])',
+      [[ids.firstEmployee, ids.otherEmployee, ids.otherUnitEmployee]]);
     await pool.query('DELETE FROM employees WHERE id = ANY($1::uuid[])',
       [[ids.firstEmployee, ids.otherEmployee, ids.otherUnitEmployee]]);
     await pool.query('DELETE FROM customers WHERE id = ANY($1::uuid[])',
@@ -95,12 +98,47 @@ test('employee self-service enforces identity, assignment, status and business-u
       ids.firstEmployee, ids.otherEmployee, ids.otherUnitEmployee]
   );
 
+  // Rate editing is management-only; each worker sees only their own
+  // effective rate, never future-dated or another staff member's wages.
+  await assert.rejects(
+    setPayrollRate(ids.staff,ids.firstUnit,{
+      employeeId:ids.firstEmployee,effectiveOn:'2020-01-01',
+      hourlyCents:1800,overtimeMultiplierBps:15000,
+    }),
+    (error:unknown)=>typeof error==='object'&&error!==null&&'statusCode' in error&&error.statusCode===403
+  );
+  await setPayrollRate(ids.manager,ids.firstUnit,{
+    employeeId:ids.firstEmployee,effectiveOn:'2020-01-01',
+    hourlyCents:1875,overtimeMultiplierBps:15000,
+  });
+  await setPayrollRate(ids.manager,ids.firstUnit,{
+    employeeId:ids.firstEmployee,effectiveOn:'2099-01-01',
+    hourlyCents:2599,overtimeMultiplierBps:15000,
+  });
+  await pool.query(`INSERT INTO payroll_hourly_rates
+    (business_unit_id,employee_id,effective_on,hourly_cents,overtime_multiplier_bps)
+    VALUES($1,$3,'2020-01-01',4100,15000),
+          ($2,$4,'2020-01-01',3350,15000)`,
+    [ids.firstUnit,ids.secondUnit,ids.otherEmployee,ids.otherUnitEmployee]);
   const profile = await employeeProfile(ids.staff, {
     email: 'staff@example.com',
     displayName: 'Assigned Staff',
   });
   assert.equal(profile.employment.length, 1);
   assert.equal(profile.employment[0]?.businessUnitId, ids.firstUnit);
+  assert.equal(profile.employment[0]?.payRate?.hourlyCents,1875);
+  assert.equal(profile.employment[0]?.payRate?.effectiveOn,'2020-01-01');
+  assert.equal(profile.employment[0]?.payRate?.overtimeMultiplierBps,15000);
+  assert.equal(profile.employment[0]?.payRate?.hourlyCents===4100,false,
+    'Worker may not see a different employee rate in the same business');
+  const otherProfile=await employeeProfile(ids.otherUser,{
+    email:'other@example.com',displayName:'Other Staff',
+  });
+  assert.equal(otherProfile.employment.length,2);
+  const ratesByUnit=new Map(otherProfile.employment.map(x=>[x.businessUnitId,x.payRate?.hourlyCents]));
+  assert.equal(ratesByUnit.get(ids.firstUnit),4100);
+  assert.equal(ratesByUnit.get(ids.secondUnit),3350);
+
 
   const jobs = await employeeJobs(ids.staff, { limit: 50, offset: 0 });
   assert.deepEqual(jobs.data.map((row) => row.id), [ids.assignedJob]);
