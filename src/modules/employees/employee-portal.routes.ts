@@ -17,6 +17,7 @@ import {
  listShifts, respondToShift, shiftResponseSchema,
 } from './employee-scheduling.service.js';
 import { listRoutesForEmployee } from './employee-routes.service.js';
+import { myGrossStatements } from './payroll.service.js';
 import {
   timeQuerySchema,clockInSchema,beginBreakSchema,getEmployeeTimesheet,
   clockIn,startBreak,endBreak,clockOut,
@@ -124,4 +125,9 @@ employeePortalRouter.post('/time/break/end',async(req,res)=>{
 employeePortalRouter.post('/time/clock-out',async(req,res)=>{
   const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.body);
   res.json(await clockOut(req.auth!.userId,businessUnitId));
+});
+
+employeePortalRouter.get('/pay/statements',async(req,res)=>{
+  const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.query);
+  res.json(await myGrossStatements(req.auth!.userId,businessUnitId));
 });
