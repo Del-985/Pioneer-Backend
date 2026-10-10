@@ -405,3 +405,27 @@ export async function myGrossStatements(userId:string,unit:string){
     netPay:null,paymentStatus:'not_recorded',
   }))};
 }
+
+export async function payrollJobCosts(userId:string,unit:string){
+  await assertBusinessUnitPermission(userId,unit,'payroll.read');
+  const result=await pool.query<{
+    work_order_id:string;work_order_number:string;title:string;
+    employee_count:string;approved_seconds:string;gross_cents:string;
+  }>(`
+    SELECT wo.id AS work_order_id,wo.work_order_number,wo.title,
+      count(DISTINCT l.employee_id)::text AS employee_count,
+      sum(l.regular_seconds+l.overtime_seconds)::text AS approved_seconds,
+      sum(l.gross_cents)::text AS gross_cents
+    FROM payroll_run_lines l
+    JOIN payroll_runs r ON r.id=l.payroll_run_id
+    JOIN employee_time_entries t ON t.id=l.time_entry_id
+    JOIN work_orders wo ON wo.id=t.work_order_id AND wo.business_unit_id=r.business_unit_id
+    WHERE r.business_unit_id=$1 AND r.status='posted'
+    GROUP BY wo.id,wo.work_order_number,wo.title
+    ORDER BY sum(l.gross_cents) DESC,wo.work_order_number LIMIT 150`,[unit]);
+  return{data:result.rows.map(x=>({
+    jobId:x.work_order_id,workOrderNumber:x.work_order_number,jobTitle:x.title,
+    employeeCount:Number(x.employee_count),workedSeconds:Number(x.approved_seconds),
+    grossLaborCents:Number(x.gross_cents),
+  }))};
+}
