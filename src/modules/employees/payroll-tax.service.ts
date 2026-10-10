@@ -415,7 +415,8 @@ export async function prepareTax(user:string,unit:string,run:string,
   const existing=await findTax(c,unit,run,true);
   if(existing)throw new HttpError(409,'TAX_ALREADY_PREPARED',
    'This payroll already has a tax preview. Void its draft to replace it.');
-  const source=await calcSource(c,unit,run,input.reimbursementsVerifiedNonTaxable);
+  const reimbursementsVerifiedNonTaxable=input.reimbursementsVerifiedNonTaxable===true;
+  const source=await calcSource(c,unit,run,reimbursementsVerifiedNonTaxable);
   const amount=taxFields.map(k=>source.result[k]);
   const cols=[...taxCols];
   const placeholders=cols.map((_,i)=>'$'+(i+8)).join(',');
@@ -441,7 +442,7 @@ export async function prepareTax(user:string,unit:string,run:string,
       ...taxFields.map(key=>line[key])]);
   }
   await audit(c,user,unit,id,'prepared',{runId:run,taxRuleVersion:RULE_SET,
-    employeeCount:source.lines.length,reimbursementsVerifiedNonTaxable:input.reimbursementsVerifiedNonTaxable,
+    employeeCount:source.lines.length,reimbursementsVerifiedNonTaxable,
     taxesComputed:true,paymentsEnabled:false});
   return{data:{id,runId:run,status:'draft',...source.result,
     canDisburse:false,projectedNetIsFinal:false}};
