@@ -51,7 +51,8 @@ function invalidCredentials(): HttpError {
 export async function createSession(
   email: string,
   password: string,
-  metadata: SessionMetadata
+  metadata: SessionMetadata,
+  ttlHours = env.SESSION_TTL_HOURS,
 ) {
   const userResult = await pool.query<UserRow>(
     `SELECT id, email, display_name, password_hash, status
@@ -74,7 +75,7 @@ export async function createSession(
 
   const token = randomBytes(32).toString('base64url');
   const tokenHash = hashSessionToken(token);
-  const expiresAt = new Date(Date.now() + env.SESSION_TTL_HOURS * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + Math.max(1, Math.min(ttlHours, env.SESSION_TTL_HOURS)) * 60 * 60 * 1000);
   const client = await pool.connect();
 
   try {
