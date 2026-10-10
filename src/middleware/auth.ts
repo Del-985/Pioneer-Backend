@@ -26,6 +26,44 @@ function getSessionToken(req: Request): string | null {
   return readCookie(req.headers.cookie, env.SESSION_COOKIE_NAME);
 }
 
+// The employee frontend lives on a different registrable domain from the API.
+// Safari can reject its third-party cookie even when POST /auth/login succeeds.
+// A bearer token is therefore allowed *only* on the employee portal routes,
+// never on the Admin, Books, customer or platform routes.
+export function isTrustedEmployeePortalOrigin(origin: string | undefined): boolean {
+  if (origin === 'https://employee.pioneeroutdoorservices.com') return true;
+  if (env.NODE_ENV === 'production') return false;
+  return origin === 'http://localhost:5173' ||
+    origin === 'http://127.0.0.1:5173' ||
+    origin === 'http://127.0.0.1:4173' ||
+    origin === 'http://localhost:4173';
+}
+
+export const requireEmployeePortalAuth: RequestHandler = async (req, res, next) => {
+  const header = req.get('authorization');
+  if (!header) {
+    // Keep the existing HTTP-only cookie mechanism compatible for browsers
+    // that already accept it.
+    requireAuth(req, res, next);
+    return;
+  }
+  try {
+    if (!isTrustedEmployeePortalOrigin(req.get('origin'))) {
+      throw new HttpError(403, 'EMPLOYEE_SESSION_ORIGIN_DENIED',
+        'Employee session access is restricted to the secure employee portal.');
+    }
+    const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(header);
+    if (!match) {
+      throw new HttpError(401, 'INVALID_EMPLOYEE_SESSION',
+        'This employee session is missing or invalid.');
+    }
+    req.auth = await authenticateSessionToken(match[1]!);
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const requireAuth: RequestHandler = async (req, _res, next) => {
   try {
     const token = getSessionToken(req);
