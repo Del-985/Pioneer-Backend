@@ -419,118 +419,18 @@ export async function prepareTax(user:string,unit:string,run:string,
    'This payroll already has a tax preview. Void its draft to replace it.');
   const source=await calcSource(c,unit,run,input.reimbursementsVerifiedNonTaxable);
   const amount=taxFields.map(k=>source.result[k]);
+  const cols=[...taxCols];
+  const placeholders=cols.map((_,i)=>'$'+(i+8)).join(',');
   const q=await c.query<{id:string}>(`
-    INSERT INTO payroll_tax_calculations(
-      legal_entity_id,business_unit_id,payroll_run_id,native_calculation_id,
-      source_digest,tax_rule_version,employee_count,
-      ${taxCols.join(',')},notes,created_by_user_id)
-    VALUES($1,$2,$3,$4,$5,$6,$7,
-      ${taxCols.map((_,i)=>'
-    RETURNING id`,
-    [native.legal_entity_id,unit,run,native.id,source.digest,RULE_SET,
-      source.lines.length,...amount,input.notes??null,user]);
-  const id=q.rows[0]!.id;
-  for(const line of source.lines){
-   await c.query(`INSERT INTO payroll_tax_employee_lines(
-     calculation_id,business_unit_id,employee_id,election_id,opening_id,
-     ${taxCols.join(',')})
-     VALUES($1,$2,$3,$4,$5,${taxCols.map((_,i)=>'$'+(i+6)).join(',')})`,
-     [id,unit,line.employeeId,line.electionId,line.openingId,
-      ...taxFields.map(key=>line[key])]);
-  }
-  await audit(c,user,unit,id,'prepared',{runId:run,taxRuleVersion:RULE_SET,
-    employeeCount:source.lines.length,reimbursementsVerifiedNonTaxable:input.reimbursementsVerifiedNonTaxable,
-    taxesComputed:true,paymentsEnabled:false});
-  return{data:{id,runId:run,status:'draft',...source.result,
-    canDisburse:false,projectedNetIsFinal:false}};
- });
-}
-export async function approveTax(user:string,unit:string,run:string){
- await assertBusinessUnitPermission(user,unit,'payroll.tax.approve');
- return tx(async c=>{
-  const existing=await findTax(c,unit,run,true);
-  if(!existing)throw new HttpError(404,'TAX_PREVIEW_NOT_FOUND',
-   'Prepare a native withholding preview first.');
-  if(existing.status!=='draft')throw new HttpError(409,'TAX_NOT_DRAFT',
-   'Only tax previews in draft can be approved.');
-  const prepared=await c.query<{metadata:{reimbursementsVerifiedNonTaxable?:boolean}}>(`
-    SELECT metadata FROM payroll_tax_events
-    WHERE calculation_id=$1 AND action='prepared'
-    ORDER BY created_at LIMIT 1`,[existing.id]);
-  const source=await calcSource(c,unit,run,
-    prepared.rows[0]?.metadata.reimbursementsVerifiedNonTaxable??false);
-  if(source.digest!==existing.source_digest||source.native.id!==existing.native_calculation_id)
-   throw new HttpError(409,'TAX_SOURCE_CHANGED',
-    'The verified tax inputs have changed. Void this draft and recalculate.');
-  await c.query(`UPDATE payroll_tax_calculations SET status='approved',
-    approved_at=now(),approved_by_user_id=$2 WHERE id=$1`,[existing.id,user]);
-  await audit(c,user,unit,existing.id,'approved',{runId:run,
-    paymentsEnabled:false,taxReturnsFiled:false,employerOtherTaxesStatus:'not_calculated'});
-  return{data:{id:existing.id,runId:run,status:'approved',
-    canDisburse:false,projectedNetIsFinal:false}};
- });
-}
-export async function voidTax(user:string,unit:string,run:string,
- input:z.infer<typeof taxVoidSchema>){
- await assertBusinessUnitPermission(user,unit,'payroll.tax.manage');
- return tx(async c=>{
-  const existing=await findTax(c,unit,run,true);
-  if(!existing)throw new HttpError(404,'TAX_PREVIEW_NOT_FOUND','Tax preview not found.');
-  if(existing.status!=='draft')throw new HttpError(409,'TAX_APPROVED_LOCKED',
-   'Approved tax calculations are immutable and cannot be voided by the draft endpoint.');
-  await c.query(`UPDATE payroll_tax_calculations SET status='void',
-   voided_at=now(),voided_by_user_id=$2 WHERE id=$1`,[existing.id,user]);
-  await audit(c,user,unit,existing.id,'voided',{reason:input.reason,runId:run});
-  return{data:{id:existing.id,status:'void'}};
- });
-}
-export async function listTax(user:string,unit:string){
- await assertBusinessUnitPermission(user,unit,'payroll.tax.read');
- const q=await pool.query<TaxCalcDB>(taxCalcColumns+`
-  WHERE c.business_unit_id=$1 ORDER BY c.created_at DESC LIMIT 100`,[unit]);
- return{data:q.rows.map(mapCalc)};
-}
-export async function taxDetail(user:string,unit:string,run:string){
- await assertBusinessUnitPermission(user,unit,'payroll.tax.read');
- const c=await pool.connect();
- try{
-  const q=await findTax(c,unit,run);
-  if(!q)throw new HttpError(404,'TAX_PREVIEW_NOT_FOUND','Tax preview not found.');
-  const rows=await c.query<TaxLineDB>(`
-   SELECT l.employee_id,e.display_name employee_name,
-   ${taxCols.map(key=>'l.'+key+'::text').join(',')}
-   FROM payroll_tax_employee_lines l
-   JOIN employees e ON e.id=l.employee_id AND e.business_unit_id=l.business_unit_id
-   WHERE l.calculation_id=$1 ORDER BY e.display_name,l.employee_id`,[q.id]);
-  const events=await c.query(`SELECT action,created_at FROM payroll_tax_events
-    WHERE calculation_id=$1 ORDER BY created_at,id`,[q.id]);
-  return{data:{...mapCalc(q),lines:rows.rows.map(mapTaxLine),
-    events:events.rows.map(x=>({action:x.action,createdAt:x.created_at}))}};
- }finally{c.release();}
-}
-export async function employeeTaxPreview(user:string,unit:string){
- const employeeId=await employeeSelf(user,unit);
- const q=await pool.query<TaxLineDB&{
-  id:string;period_start:string;period_end:string;tax_rule_version:string
- }>(`SELECT c.id,r.period_start::text,r.period_end::text,
-  c.tax_rule_version,l.employee_id,e.display_name AS employee_name,
-  ${taxCols.map(k=>'l.'+k+'::text').join(',')}
-  FROM payroll_tax_employee_lines l
-  JOIN payroll_tax_calculations c ON c.id=l.calculation_id AND c.status='approved'
-  JOIN payroll_runs r ON r.id=c.payroll_run_id
-  JOIN employees e ON e.id=l.employee_id
-  WHERE l.business_unit_id=$1 AND l.employee_id=$2
-  ORDER BY r.period_start DESC LIMIT 50`,[unit,employeeId]);
- return{data:q.rows.map(x=>({calculationId:x.id,periodStart:x.period_start,
-  periodEnd:x.period_end,taxRuleVersion:x.tax_rule_version,
-  ...mapTaxLine(x),officialPayStub:false,canDisburse:false,
-  projectedNetIsFinal:false,employerOtherTaxesStatus:'not_calculated',
- }))};
-}
-+(i+8)).join(',')},${8+taxCols.length},${9+taxCols.length})
-    RETURNING id`,
-    [native.legal_entity_id,unit,run,native.id,source.digest,RULE_SET,
-      source.lines.length,...amount,input.notes??null,user]);
+   INSERT INTO payroll_tax_calculations(
+    legal_entity_id,business_unit_id,payroll_run_id,native_calculation_id,
+    source_digest,tax_rule_version,employee_count,
+    ${cols.join(',')},notes,created_by_user_id)
+   VALUES($1,$2,$3,$4,$5,$6,$7,
+    ${placeholders},${8+cols.length},${9+cols.length})
+   RETURNING id`,
+   [native.legal_entity_id,unit,run,native.id,source.digest,RULE_SET,
+    source.lines.length,...amount,input.notes??null,user]);
   const id=q.rows[0]!.id;
   for(const line of source.lines){
    await c.query(`INSERT INTO payroll_tax_employee_lines(
