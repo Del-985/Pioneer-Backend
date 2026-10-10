@@ -1,3 +1,4 @@
+import {employeeNativePreview} from './payroll-native.service.js';
 import {employeeProviderStatements} from './payroll-provider.service.js';
 import {employeePostedAdjustments} from './payroll-adjustments.service.js';
 import express, { Router } from 'express';
@@ -190,4 +191,10 @@ employeePortalRouter.get('/pay/provider-statements',async(req,res)=>{
   const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.query);
   res.setHeader('Cache-Control','private, no-store');
   res.json(await employeeProviderStatements(req.auth!.userId,businessUnitId));
+});
+
+employeePortalRouter.get('/pay/native-preview',async(req,res)=>{
+ const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.query);
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await employeeNativePreview(req.auth!.userId,businessUnitId));
 });
