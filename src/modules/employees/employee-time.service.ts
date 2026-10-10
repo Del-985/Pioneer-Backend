@@ -372,7 +372,7 @@ export async function managerCloseOpenTime(
     const old=await lockEntry(c,businessUnitId,id);
     if(old.clock_out_at)throw new HttpError(409,'ALREADY_CLOSED','This time entry is already closed.');
     const start=input.clockInAt?new Date(input.clockInAt):old.clock_in_at;
-    const end=new Date(input.clockOutAt);
+    const end=new Date(input.clockOutAt!);
     const additional=old.active_break_started_at?
       secondsBetween(old.active_break_started_at,end):0;
     const unpaid=input.unpaidBreakMinutes!==undefined?input.unpaidBreakMinutes*60:
