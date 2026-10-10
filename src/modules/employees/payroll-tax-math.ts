@@ -32,26 +32,26 @@ const bands:{[status in FilingStatus]:{normal:Band[];twoJobs:Band[]}}={
  married_joint:{
   normal:[[0,0,0],[19300,0,0.10],[44100,2480,0.12],[120100,11600,0.22],
     [230700,35932,0.24],[422850,82048,0.32],[531750,116896,0.35],
-    [788000,206583.50,0.37]].map(([from,base,rate])=>({from,base,rate})),
+    [788000,206583.50,0.37]].map(([from,base,rate])=>({from:from!,base:base!,rate:rate!})),
   twoJobs:[[0,0,0],[16100,0,0.10],[28500,1240,0.12],[66500,5800,0.22],
     [121800,17966,0.24],[217875,41024,0.32],[272325,58448,0.35],
-    [400450,103291.75,0.37]].map(([from,base,rate])=>({from,base,rate})),
+    [400450,103291.75,0.37]].map(([from,base,rate])=>({from:from!,base:base!,rate:rate!})),
  },
  single:{
   normal:[[0,0,0],[7500,0,0.10],[19900,1240,0.12],[57900,5800,0.22],
     [113200,17966,0.24],[209275,41024,0.32],[263725,58448,0.35],
-    [648100,192979.25,0.37]].map(([from,base,rate])=>({from,base,rate})),
+    [648100,192979.25,0.37]].map(([from,base,rate])=>({from:from!,base:base!,rate:rate!})),
   twoJobs:[[0,0,0],[8050,0,0.10],[14250,620,0.12],[33250,2900,0.22],
     [60900,8983,0.24],[108938,20512,0.32],[136163,29224,0.35],
-    [328350,96489.63,0.37]].map(([from,base,rate])=>({from,base,rate})),
+    [328350,96489.63,0.37]].map(([from,base,rate])=>({from:from!,base:base!,rate:rate!})),
  },
  head_of_household:{
   normal:[[0,0,0],[15550,0,0.10],[33250,1770,0.12],[83000,7740,0.22],
     [121250,16155,0.24],[217300,39207,0.32],[271750,56631,0.35],
-    [656150,191171,0.37]].map(([from,base,rate])=>({from,base,rate})),
+    [656150,191171,0.37]].map(([from,base,rate])=>({from:from!,base:base!,rate:rate!})),
   twoJobs:[[0,0,0],[12075,0,0.10],[20925,885,0.12],[45800,3870,0.22],
     [64925,8077.50,0.24],[112950,19603.50,0.32],[140175,28315.50,0.35],
-    [332375,95585.50,0.37]].map(([from,base,rate])=>({from,base,rate})),
+    [332375,95585.50,0.37]].map(([from,base,rate])=>({from:from!,base:base!,rate:rate!})),
  },
 };
 export function centsRatio(cents:number,bps:number,denom=10000):number{
