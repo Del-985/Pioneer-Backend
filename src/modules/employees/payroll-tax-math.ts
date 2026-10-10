@@ -74,11 +74,9 @@ export function federalIncome2026(wageCents:number,periods:number,e:Election){
  const annualTax=baseCents+centsRatio(annual-b.from*100,Math.round(b.rate*10000));
  // Worksheet 1A: tentative per period less annual credits / pay periods;
  // then add the extra withholding amount for the current period.
- const tentative=Math.max(0,Math.floor((BigInt(annualTax)*2n+BigInt(periods))/
-  (2n*BigInt(periods)))-
-  Math.floor((BigInt(e.federalStep3CreditsCents)*2n+BigInt(periods))/
-  (2n*BigInt(periods))));
- return Math.max(0,tentative)+e.federalStep4cExtraCents;
+ const netAnnual=Math.max(0,annualTax-e.federalStep3CreditsCents);
+ const tentative=Number((BigInt(netAnnual)+BigInt(periods)/2n)/BigInt(periods));
+ return tentative+e.federalStep4cExtraCents;
 }
 export function ohioIncomeAugust2026(wageCents:number,periods:number,exemptions:number){
  if(![26,52].includes(periods))throw new Error('Unsupported pay frequency');
