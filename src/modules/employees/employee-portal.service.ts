@@ -22,6 +22,9 @@ type EmployeeRow = {
   phone: string | null;
   job_title: string | null;
   hire_date: string | null;
+  hourly_rate_cents: string | null;
+  hourly_rate_effective_on: string | null;
+  overtime_multiplier_bps: number | null;
 };
 
 type JobRow = {
@@ -59,6 +62,11 @@ function mapEmployee(row: EmployeeRow) {
     phone: row.phone,
     jobTitle: row.job_title,
     hireDate: row.hire_date,
+    payRate: row.hourly_rate_cents === null ? null : {
+      hourlyCents: Number(row.hourly_rate_cents),
+      effectiveOn: row.hourly_rate_effective_on,
+      overtimeMultiplierBps: row.overtime_multiplier_bps,
+    },
   };
 }
 
@@ -94,9 +102,19 @@ async function getActiveEmployment(userId: string) {
   const result = await pool.query<EmployeeRow>(
     `SELECT e.id, e.business_unit_id, b.name AS business_name,
        e.display_name, e.employee_number, e.email::text, e.phone, e.job_title,
-       e.hire_date::text
+       e.hire_date::text,
+       current_rate.hourly_cents::text AS hourly_rate_cents,
+       current_rate.effective_on::text AS hourly_rate_effective_on,
+       current_rate.overtime_multiplier_bps
      FROM employees e
      JOIN business_units b ON b.id = e.business_unit_id
+     LEFT JOIN LATERAL (
+       SELECT hourly_cents, effective_on, overtime_multiplier_bps
+       FROM payroll_hourly_rates r
+       WHERE r.employee_id = e.id AND r.business_unit_id = e.business_unit_id
+         AND r.effective_on <= (now() AT TIME ZONE 'America/Detroit')::date
+       ORDER BY r.effective_on DESC LIMIT 1
+     ) current_rate ON true
      WHERE e.user_id = $1 AND e.status = 'active' AND b.status = 'active'
      ORDER BY b.name, e.display_name`,
     [userId]
