@@ -1,4 +1,9 @@
 import {
+ electionSchema,openingSchema,taxPrepareSchema,taxVoidSchema,
+ addElection,listElections,addOpening,listOpenings,
+ prepareTax,approveTax,voidTax,listTax,taxDetail,
+} from './payroll-tax.service.js';
+import {
  deductionRuleSchema,nativePrepareSchema,nativeVoidSchema,
  setNativeDeduction,listNativeDeductions,prepareNativeCalculation,
  approveNativeCalculation,voidNativeCalculation,listNativeCalculations,
@@ -156,4 +161,40 @@ adminPayrollRouter.post('/runs/:runId/native/approve',async(req,res)=>{
 adminPayrollRouter.post('/runs/:runId/native/void',async(req,res)=>{
  res.json(await voidNativeCalculation(req.auth!.userId,unit(req),
   requireRouteParam(req,'runId'),nativeVoidSchema.parse(req.body)));
+});
+
+adminPayrollRouter.get('/tax/elections',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await listElections(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/tax/elections',async(req,res)=>{
+ res.status(201).json(await addElection(req.auth!.userId,unit(req),
+  electionSchema.parse(req.body)));
+});
+adminPayrollRouter.get('/runs/:runId/tax/openings',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await listOpenings(req.auth!.userId,unit(req),requireRouteParam(req,'runId')));
+});
+adminPayrollRouter.post('/runs/:runId/tax/openings',async(req,res)=>{
+ res.status(201).json(await addOpening(req.auth!.userId,unit(req),
+  requireRouteParam(req,'runId'),openingSchema.parse(req.body)));
+});
+adminPayrollRouter.get('/tax/calculations',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await listTax(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/runs/:runId/tax/prepare',async(req,res)=>{
+ res.status(201).json(await prepareTax(req.auth!.userId,unit(req),
+  requireRouteParam(req,'runId'),taxPrepareSchema.parse(req.body??{})));
+});
+adminPayrollRouter.get('/runs/:runId/tax',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await taxDetail(req.auth!.userId,unit(req),requireRouteParam(req,'runId')));
+});
+adminPayrollRouter.post('/runs/:runId/tax/approve',async(req,res)=>{
+ res.json(await approveTax(req.auth!.userId,unit(req),requireRouteParam(req,'runId')));
+});
+adminPayrollRouter.post('/runs/:runId/tax/void',async(req,res)=>{
+ res.json(await voidTax(req.auth!.userId,unit(req),requireRouteParam(req,'runId'),
+  taxVoidSchema.parse(req.body)));
 });
