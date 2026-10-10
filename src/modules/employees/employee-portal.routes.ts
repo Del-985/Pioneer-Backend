@@ -2,7 +2,12 @@ import {employeePostedAdjustments} from './payroll-adjustments.service.js';
 import express, { Router } from 'express';
 import { isObjectStorageConfigured } from '../bookkeeping/object-storage.service.js';
 import { z } from 'zod';
-import { requireAuth } from '../../middleware/auth.js';
+import { requireEmployeePortalAuth, isTrustedEmployeePortalOrigin } from '../../middleware/auth.js';
+import { HttpError } from '../../lib/http-error.js';
+import { createSession, authenticateSessionToken, revokeSession } from '../auth/auth.service.js';
+import { loginSchema, changePasswordSchema } from '../auth/auth.schemas.js';
+import { loginRateLimiter } from '../auth/auth.routes.js';
+import { changePassword } from '../auth/password-management.service.js';
 import { requireRouteParam } from '../../lib/route-param.js';
 import {
   employeeJob,
@@ -25,7 +30,48 @@ import {
 } from './employee-time.service.js';
 
 export const employeePortalRouter = Router();
-employeePortalRouter.use(requireAuth);
+
+function requestMetadata(req: express.Request) {
+  return { ipAddress: req.ip ?? null, userAgent: req.get('user-agent') ?? null };
+}
+
+// The cookie-only shared /api/auth/login endpoint cannot establish a third-party
+// session on iOS Safari. Issue an opaque, revocable, short-lived session token
+// only to the employee portal. The raw token is never exposed on Admin APIs.
+employeePortalRouter.post('/session/login',loginRateLimiter,async(req,res)=>{
+  if(!isTrustedEmployeePortalOrigin(req.get('origin'))) {
+    throw new HttpError(403,'EMPLOYEE_LOGIN_ORIGIN_DENIED',
+      'Employee login must originate from the secure employee portal.');
+  }
+  const credentials=loginSchema.parse(req.body);
+  const session=await createSession(credentials.email,credentials.password,
+    requestMetadata(req),24);
+  try {
+    const profile=await employeeProfile(session.user.id,session.user);
+    res.setHeader('Cache-Control','no-store');
+    res.json({data:{
+      token:session.token,expiresAt:session.expiresAt,profile,
+    }});
+  }catch(error){
+    const auth=await authenticateSessionToken(session.token);
+    await revokeSession(auth.sessionId,auth.userId,requestMetadata(req));
+    throw error;
+  }
+});
+
+employeePortalRouter.use(requireEmployeePortalAuth);
+
+employeePortalRouter.post('/session/logout',async(req,res)=>{
+  await revokeSession(req.auth!.sessionId,req.auth!.userId,requestMetadata(req));
+  res.setHeader('Cache-Control','no-store');
+  res.status(204).end();
+});
+employeePortalRouter.post('/session/password/change',async(req,res)=>{
+  const input=changePasswordSchema.parse(req.body);
+  await changePassword(req.auth!.userId,input.currentPassword,input.newPassword,
+    req.auth!.sessionId,requestMetadata(req));
+  res.status(204).end();
+});
 
 // Self-service endpoints intentionally do not accept an employeeId supplied by
 // the browser. Employee identity and business unit access derive from the
