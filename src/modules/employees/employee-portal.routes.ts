@@ -1,3 +1,4 @@
+import {employeeTaxPreview} from './payroll-tax.service.js';
 import {employeeNativePreview} from './payroll-native.service.js';
 import {employeeProviderStatements} from './payroll-provider.service.js';
 import {employeePostedAdjustments} from './payroll-adjustments.service.js';
@@ -197,4 +198,10 @@ employeePortalRouter.get('/pay/native-preview',async(req,res)=>{
  const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.query);
  res.setHeader('Cache-Control','private, no-store');
  res.json(await employeeNativePreview(req.auth!.userId,businessUnitId));
+});
+
+employeePortalRouter.get('/pay/tax-preview',async(req,res)=>{
+ const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.query);
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await employeeTaxPreview(req.auth!.userId,businessUnitId));
 });
