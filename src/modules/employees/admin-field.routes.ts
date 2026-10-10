@@ -11,6 +11,11 @@ import {
 import {
   listRoutesForAdmin,createRoute,updateRoute,routeCreateSchema,routeUpdateSchema,
 } from './employee-routes.service.js';
+import {
+  adminTimeQuerySchema,correctionSchema,manualEntrySchema,reviewSchema,
+  getAdminTimesheets,correctTimeEntry,managerCloseOpenTime,
+  manualTimeEntry,reviewTimeEntry,getEntryHistory,
+} from './employee-time.service.js';
 
 export const adminFieldRouter=Router({mergeParams:true});
 adminFieldRouter.use(requireAuth);
@@ -63,4 +68,29 @@ adminFieldRouter.post('/routes',async(req,res)=>{
 });
 adminFieldRouter.patch('/routes/:routeId',async(req,res)=>{
   res.json({data:await updateRoute(req.auth!.userId,unit(req),requireRouteParam(req,'routeId'),routeUpdateSchema.parse(req.body))});
+});
+
+adminFieldRouter.get('/time',async(req,res)=>{
+  res.json(await getAdminTimesheets(req.auth!.userId,unit(req),
+    adminTimeQuerySchema.parse(req.query)));
+});
+adminFieldRouter.post('/time/entries',async(req,res)=>{
+  res.status(201).json(await manualTimeEntry(req.auth!.userId,unit(req),
+    manualEntrySchema.parse(req.body)));
+});
+adminFieldRouter.patch('/time/entries/:entryId',async(req,res)=>{
+  res.json(await correctTimeEntry(req.auth!.userId,unit(req),
+    requireRouteParam(req,'entryId'),correctionSchema.parse(req.body)));
+});
+adminFieldRouter.post('/time/entries/:entryId/close',async(req,res)=>{
+  res.json(await managerCloseOpenTime(req.auth!.userId,unit(req),
+    requireRouteParam(req,'entryId'),correctionSchema.parse(req.body)));
+});
+adminFieldRouter.post('/time/entries/:entryId/review',async(req,res)=>{
+  res.json(await reviewTimeEntry(req.auth!.userId,unit(req),
+    requireRouteParam(req,'entryId'),reviewSchema.parse(req.body)));
+});
+adminFieldRouter.get('/time/entries/:entryId/history',async(req,res)=>{
+  res.json(await getEntryHistory(req.auth!.userId,unit(req),
+    requireRouteParam(req,'entryId')));
 });
