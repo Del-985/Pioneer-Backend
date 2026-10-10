@@ -23,6 +23,9 @@ export type Election={
 export type WageHistory={priorSocialSecurityWagesCents:number;priorMedicareWagesCents:number};
 export type TaxInput={
  grossCents:number;voluntaryDeductionsCents:number;reimbursementCents:number;
+ // Bonuses, commissions and retroactive payments may require Ohio's
+ // supplemental withholding rate rather than regular wage tables.
+ ohioSupplementalWagesCents?:number;
  payPeriods:number;periodEnd:string;periodYear:number;
  election:Election;history:WageHistory;
  reimbursementsVerifiedNonTaxable:boolean;
@@ -90,6 +93,7 @@ export function ohioIncomeAugust2026(wageCents:number,periods:number,exemptions:
 }
 function assertValid(i:TaxInput){
  const values=[i.grossCents,i.voluntaryDeductionsCents,i.reimbursementCents,
+  i.ohioSupplementalWagesCents??0,
   i.history.priorSocialSecurityWagesCents,i.history.priorMedicareWagesCents,
   i.election.federalStep3CreditsCents,i.election.federalStep4aIncomeCents,
   i.election.federalStep4bDeductionsCents,i.election.federalStep4cExtraCents];
@@ -97,6 +101,8 @@ function assertValid(i:TaxInput){
   throw new Error('Invalid taxable wages, prior wages or W-4 amounts');
  if(i.grossCents<i.voluntaryDeductionsCents)
   throw new Error('Voluntary deductions cannot exceed wages');
+ if((i.ohioSupplementalWagesCents??0)>i.grossCents)
+  throw new Error('Ohio supplemental wages cannot exceed gross wages');
  if(i.reimbursementCents>0&&!i.reimbursementsVerifiedNonTaxable)
   throw new Error('Reimbursement tax status must be reviewed before calculating taxes');
  if(![26,52].includes(i.payPeriods)||i.periodYear!==2026||
@@ -122,7 +128,12 @@ export function calculateTax2026(i:TaxInput){
  assertValid(i);
  const {grossCents:g,election:e,history:h,payPeriods:p}=i;
  const fed=federalIncome2026(g,p,e);
- const ohio=ohioIncomeAugust2026(g,p,e.ohioIt4Exemptions);
+ // Ohio Admin. Code 5703-7-10: supplemental compensation (e.g., bonuses)
+ // is withheld at the maximum statutory 2026 income tax rate of 2.75%.
+ // Only regular compensation goes through the 2026 computer formula.
+ const supplemental=i.ohioSupplementalWagesCents??0;
+ const ohio=ohioIncomeAugust2026(g-supplemental,p,e.ohioIt4Exemptions)+
+  centsRatio(supplemental,275);
  const toledo=centsRatio(g,250);
  const school=e.schoolDistrictBasis==='earned_income'?
   centsRatio(g,e.schoolDistrictRateBps):0;
@@ -145,7 +156,9 @@ export function calculateTax2026(i:TaxInput){
   socialSecurityCents:employeeSS,medicareCents:medicare,
   additionalMedicareCents:additionalMedicare,totalWithholdingCents:total,
   voluntaryDeductionsCents:i.voluntaryDeductionsCents,
-  reimbursementCents:i.reimbursementCents,projectedNetCents:projectedNet,
+  reimbursementCents:i.reimbursementCents,
+  ohioSupplementalWagesCents:i.ohioSupplementalWagesCents??0,
+  projectedNetCents:projectedNet,
   employerSocialSecurityCents:employeeSS,employerMedicareCents:medicare,
   ruleVersion:RULE_SET,canDisburse:false,
   otherEmployerTaxesStatus:'not_calculated',bankVerified:false,
