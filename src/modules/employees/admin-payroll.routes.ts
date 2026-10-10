@@ -4,7 +4,7 @@ import { requireRouteParam } from '../../lib/route-param.js';
 import {
   listPayrollRates,setPayrollRate,getPayrollAccounts,
   preparePayroll,approvePayroll,voidPayroll,postPayroll,
-  listPayroll,getPayroll,rateSchema,periodSchema,journalSchema,
+  listPayroll,getPayroll,payrollJobCosts,rateSchema,periodSchema,journalSchema,
 } from './payroll.service.js';
 
 export const adminPayrollRouter=Router({mergeParams:true});
@@ -38,4 +38,8 @@ adminPayrollRouter.post('/runs/:runId/post',async(req,res)=>{
   res.json(await postPayroll(req.auth!.userId,unit(req),
     requireRouteParam(req,'runId'),
     req.body && Object.keys(req.body).length?journalSchema.parse(req.body):undefined));
+});
+
+adminPayrollRouter.get('/labor-costs',async(req,res)=>{
+  res.json(await payrollJobCosts(req.auth!.userId,unit(req)));
 });
