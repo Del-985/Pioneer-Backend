@@ -159,6 +159,10 @@ test('v0.4.3 native payroll previews are locked, source-verified and never calcu
   SET gross_cents=42 WHERE calculation_id=$1`,[renewed.id]));
  await assert.rejects(pool.query(`DELETE FROM payroll_native_calculations WHERE id=$1`,
   [renewed.id]));
+ await assert.rejects(pool.query(`UPDATE payroll_native_calculations
+  SET status='void',voided_at=now(),voided_by_user_id=$2 WHERE id=$1`,
+  [renewed.id,fixture.manager]),
+  'Approved snapshots cannot be directly voided in the database');
  const own=(await employeeNativePreview(fixture.worker,fixture.unit)).data;
  assert.equal(own.length,1);
  assert.equal(own[0].grossWagesCents,99000);
