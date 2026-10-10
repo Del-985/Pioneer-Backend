@@ -20,7 +20,7 @@ const fails=(code:number)=>(e:unknown)=>typeof e==='object'&&e!==null&&
 after(async()=>{await pool.end();});
 
 test('v0.4.1 approvals and reimbursements post independent balanced journals, with reversible history',async()=>{
-  const slug='adjustment-test-'+ctx.unit.slice(0,9);
+  const slug='adjustment-test-'+ctx.unit.slice(0,8);
   await pool.query(`INSERT INTO legal_entities(id,legal_name,display_name,slug)
     VALUES($1,'Adjustment Test','Adjustment Test',$2)`,[ctx.entity,slug]);
   await pool.query(`INSERT INTO business_units(id,legal_entity_id,name,slug)
