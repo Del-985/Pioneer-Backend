@@ -1,4 +1,9 @@
 import {
+  prepareProviderSchema, submitProviderSchema, importProviderSchema,
+  prepareProvider,providerDetail,providerList,providerExport,
+  recordProviderSubmission,importProviderResults,
+} from './payroll-provider.service.js';
+import {
   adjustmentSchema,adjustmentListSchema,adjustmentJournalSchema,
   listAdjustments,createAdjustment,approveAdjustment,voidAdjustment,
   postAdjustment,reverseAdjustment,getAdjustmentEvents,
@@ -81,4 +86,38 @@ adminPayrollRouter.post('/adjustments/:adjustmentId/reverse',async(req,res)=>{
 adminPayrollRouter.get('/adjustments/:adjustmentId/events',async(req,res)=>{
   res.json(await getAdjustmentEvents(req.auth!.userId,unit(req),
     requireRouteParam(req,'adjustmentId')));
+});
+
+adminPayrollRouter.get('/provider-batches',async(req,res)=>{
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(await providerList(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/runs/:runId/provider/prepare',async(req,res)=>{
+  const input=prepareProviderSchema.parse(req.body);
+  res.status(201).json(await prepareProvider(req.auth!.userId,unit(req),
+    requireRouteParam(req,'runId'),input));
+});
+adminPayrollRouter.get('/runs/:runId/provider',async(req,res)=>{
+  res.setHeader('Cache-Control','private, no-store');
+  res.json(await providerDetail(req.auth!.userId,unit(req),
+    requireRouteParam(req,'runId')));
+});
+adminPayrollRouter.get('/runs/:runId/provider/export',async(req,res)=>{
+  const file=await providerExport(req.auth!.userId,unit(req),
+    requireRouteParam(req,'runId'));
+  res.setHeader('Cache-Control','private, no-store');
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Content-Type','text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition','attachment; filename="'+file.filename+'"');
+  res.status(200).send(file.content);
+});
+adminPayrollRouter.post('/runs/:runId/provider/submitted',async(req,res)=>{
+  const input=submitProviderSchema.parse(req.body);
+  res.json(await recordProviderSubmission(req.auth!.userId,unit(req),
+    requireRouteParam(req,'runId'),input));
+});
+adminPayrollRouter.post('/runs/:runId/provider/import',async(req,res)=>{
+  const input=importProviderSchema.parse(req.body);
+  res.json(await importProviderResults(req.auth!.userId,unit(req),
+    requireRouteParam(req,'runId'),input));
 });
