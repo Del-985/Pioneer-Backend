@@ -80,3 +80,47 @@ Before first actual payroll, complete:
   https://toledo.oh.gov/pay-taxes
 - Ohio earnings statements:
   https://codes.ohio.gov/ohio-revised-code/section-4113.14
+
+## Recorded payments and statements (October 2026)
+
+Payments & Statements records payments completed outside Pioneer; it never sends
+ACH instructions, prints negotiable checks, debits a bank, posts a Books settlement,
+or transmits returns. Independently check payroll before paying: recording evidence
+does not repair the gross-pay engine limitations above. Actual gross and net must
+agree with the approved withholding snapshot, including its payday. Differences
+require a reviewed correction, not an override of an immutable approval.
+
+Each payment has unique request, run/employee and legal-employer payment references.
+Native recording and legacy provider batches are mutually exclusive for a run.
+Statements freeze employee name/address, employer, payday, period, gross/net,
+hourly earnings/rates, overtime, wage additions, reimbursements and deductions.
+Download HTML, open it in a browser, print/save PDF and deliver on payday. A download
+is not proof of delivery. The authenticated employee-only paid-statements API is
+available, but its employee frontend is not wired yet; this release requires print
+delivery. Existing time/gross/native/tax previews remain estimates, not statements.
+
+Full voids/returns append reversal evidence without deleting payment history.
+Later recorded wages block reversal of earlier payments on which they may depend.
+Reissues, partial recoveries, corrected withholding and later-year repayments need
+a separate reviewed correction workflow; the same run cannot be reissued here.
+Reversals never move funds or amend Books/returns. Reconcile both separately.
+
+Reports use actual payday/year/quarter and exclude reversed payments from totals;
+CSV retains reversed rows explicitly for audit. Reports cover the selected business
+only. Statement YTD gross covers the legal employer/person across its units, but
+only Pioneer payment records. External payroll/openings are excluded. This is not
+certified W-2/941/940 output. Withholding still requires manually reconciled four-base
+prior wages: recording blocks openings below known paid wages, but does not add
+recorded wages to an opening that might already include them.
+
+External tax activity records retain agency, period, date, amount and confirmations.
+These append-only records are reported evidence, not independently verified agency
+acceptance, liability reconciliation, or filing status inferred from a calculation.
+Record amendments separately referencing the original. Do not place SSNs, full bank
+numbers or credentials in free-text evidence. Employee frontend display, automatic
+paid-YTD integration, Books settlement and official return generation remain work.
+
+Tests cover authorization, isolation, date/amount mismatches, idempotent retries,
+duplicates/provider protection, frozen statements, HTML escaping, reversals/reporting,
+immutable evidence and absence of automatic Books postings.
+IRS recordkeeping: https://www.irs.gov/businesses/small-businesses-self-employed/employment-tax-recordkeeping
