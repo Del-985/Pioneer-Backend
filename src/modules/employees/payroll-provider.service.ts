@@ -186,6 +186,8 @@ export async function prepareProvider(user:string,unit:string,run:string,
   await assertBusinessUnitPermission(user,unit,'payroll.provider.manage');
   return trx(async c=>{
     const payroll=await assertPostedRun(c,unit,run);
+    if((await c.query('SELECT id FROM payroll_payments WHERE payroll_run_id=$1',[run])).rows.length)
+      throw new HttpError(409,'PROVIDER_PAYMENT_EXISTS','This payroll already has native payment records.');
     const found=await c.query<BatchRow>(batchColumns+`
       WHERE b.payroll_run_id=$1 FOR UPDATE OF b`,[run]);
     if(found.rows[0]){

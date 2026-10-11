@@ -1,3 +1,5 @@
+import {recordExternalTax,listExternalTax,recordPayment,reversePayment,listPayments,paidReport,employeePayments,paymentStatement} from '../src/modules/employees/payroll-payments.service.js';
+import {prepareProvider} from '../src/modules/employees/payroll-provider.service.js';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test,{after} from 'node:test';
@@ -149,4 +151,67 @@ test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable revi
  FROM journal_entries WHERE business_unit_id=$1`,[x.unit]);
  assert.equal(Number(account.rows[0]?.ct),1,
   'Tax preview must not post a second Books journal or initiate settlement');
+ // External payments remain distinct from immutable previews and wage accruals.
+ const approved=(await taxDetail(x.manager,x.unit,run.id)).data;
+ const paymentInput={requestKey:id(),employeeId:x.employee,payDate:prepare.payDate,
+  method:'check' as const,reference:'CHK-'+x.entity.slice(0,8),
+  evidenceReference:'Issued check and signed receipt in payroll records',
+  grossReviewReference:'Independent weekly time and overtime reconciliation completed',
+  independentlyVerifiedGrossCents:95000,netPaidCents:approved.lines[0].projectedNetCents as number,
+  employeeAddress:'101 <Main> Street\nToledo OH 43604',paymentCompleted:true as const,
+  statementDelivery:'print_and_deliver' as const};
+ await assert.rejects(recordPayment(x.worker,x.unit,run.id,paymentInput),bad(403));
+ await assert.rejects(recordPayment(x.manager,x.otherUnit,run.id,paymentInput),bad(409));
+ await assert.rejects(recordPayment(x.manager,x.unit,run.id,{...paymentInput,netPaidCents:1}),bad(409));
+ await assert.rejects(recordPayment(x.manager,x.unit,run.id,{...paymentInput,payDate:'2026-10-08'}),bad(409));
+ const payment=(await recordPayment(x.manager,x.unit,run.id,paymentInput)).data;
+ assert.equal(payment.status,'recorded_paid');
+ assert.equal(payment.bankTransferInitiated,false);
+ assert.equal(payment.statement.amounts.gross_cents,95000);
+ assert.equal(payment.statement.overtimeSeconds,5*3600);
+ assert.equal((await recordPayment(x.manager,x.unit,run.id,paymentInput)).data.id,payment.id,'Retry does not duplicate payment');
+ await assert.rejects(recordPayment(x.manager,x.unit,run.id,{...paymentInput,reference:'OTHER-CHECK'}),bad(409));
+ await assert.rejects(recordPayment(x.manager,x.unit,run.id,{...paymentInput,requestKey:id()}),bad(409));
+ await assert.rejects(prepareProvider(x.manager,x.unit,run.id,{providerName:'Test Provider'}),bad(409));
+ assert.equal((await listPayments(x.manager,x.otherUnit)).data.length,0);
+ assert.equal((await employeePayments(x.worker,x.unit)).data.length,1);
+ await assert.rejects(employeePayments(x.other,x.unit),bad(403));
+ await assert.rejects(paymentStatement(x.worker,x.unit,payment.id),bad(403));
+ const html=(await paymentStatement(x.manager,x.unit,payment.id)).data.html;
+ assert.match(html,/101 &lt;Main&gt; Street/);
+ assert.match(html,/2026-09-28 through 2026-10-04/);
+ assert.match(html,/Net paid/);
+ await pool.query("UPDATE employees SET display_name='Renamed employee' WHERE id=$1",[x.employee]);
+ assert.equal((await listPayments(x.manager,x.unit)).data[0].statement.employeeName,'Tax Worker','Statement identity is frozen');
+ await assert.rejects(pool.query('DELETE FROM payroll_payments WHERE id=$1',[payment.id]));
+ let report=(await paidReport(x.manager,x.unit,{year:2026,quarter:4})).data;
+ assert.equal(report.paymentCount,1);assert.equal(report.totals.gross_cents,95000);
+ assert.equal(report.taxReturnFiled,false);
+ assert.equal((await paidReport(x.manager,x.unit,{year:2026,quarter:3})).data.paymentCount,0);
+ const oldDigest=report.reportDigest;
+ const reversal={requestKey:id(),reason:'Check voided before delivery; full payment cancelled',
+  evidenceReference:'Voided check retained in payroll records',fullPaymentVoidedOrReturned:true as const};
+ await reversePayment(x.manager,x.unit,payment.id,reversal);
+ await reversePayment(x.manager,x.unit,payment.id,reversal);
+ report=(await paidReport(x.manager,x.unit,{year:2026,quarter:4})).data;
+ assert.equal(report.paymentCount,0);assert.equal(report.reversedCount,1);
+ assert.equal(report.totals.gross_cents,0);assert.notEqual(report.reportDigest,oldDigest);
+ assert.match((await paymentStatement(x.manager,x.unit,payment.id)).data.html,/REVERSED PAYMENT RECORD/);
+ await assert.rejects(recordPayment(x.manager,x.unit,run.id,{...paymentInput,requestKey:id(),reference:'REISSUE'}),bad(409));
+ assert.equal((await pool.query('SELECT id FROM journal_entries WHERE business_unit_id=$1',[x.unit])).rows.length,1,
+  'External-payment records do not silently double-post Books');
+
+ const external={requestKey:id(),kind:'remittance' as const,authority:'irs' as const,
+  formName:'941 deposit',periodStart:'2026-10-01',periodEnd:'2026-10-09',completedOn:'2026-10-09',
+  amountCents:12345,confirmationReference:'TEST-'+x.entity,evidenceReference:'Test official confirmation stored in payroll files',
+  externallyCompleted:true as const};
+ await assert.rejects(recordExternalTax(x.worker,x.unit,external),bad(403));
+ const taxRecord=(await recordExternalTax(x.manager,x.unit,external)).data;
+ assert.equal(taxRecord.transmittedByPioneer,false);
+ assert.equal((await recordExternalTax(x.manager,x.unit,external)).data.id,taxRecord.id);
+ await assert.rejects(recordExternalTax(x.manager,x.unit,{...external,requestKey:id()}),bad(409));
+ assert.equal((await listExternalTax(x.manager,x.unit)).data.length,1);
+ assert.equal((await listExternalTax(x.manager,x.otherUnit)).data.length,0);
+ await assert.rejects(pool.query('DELETE FROM payroll_tax_external_records WHERE id=$1',[taxRecord.id]));
+
 });

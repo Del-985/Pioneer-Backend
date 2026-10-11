@@ -1,3 +1,4 @@
+import {externalTaxSchema,recordExternalTax,listExternalTax,paymentSchema,reversalSchema,paidReportSchema,recordPayment,reversePayment,listPayments,paidReport,paymentStatement} from './payroll-payments.service.js';
 import {
  electionSchema,openingSchema,taxPrepareSchema,taxVoidSchema,
  addElection,listElections,addOpening,listOpenings,
@@ -197,4 +198,31 @@ adminPayrollRouter.post('/runs/:runId/tax/approve',async(req,res)=>{
 adminPayrollRouter.post('/runs/:runId/tax/void',async(req,res)=>{
  res.json(await voidTax(req.auth!.userId,unit(req),requireRouteParam(req,'runId'),
   taxVoidSchema.parse(req.body)));
+});
+
+adminPayrollRouter.get('/payments',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await listPayments(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/runs/:runId/payments',async(req,res)=>{
+ res.status(201).json(await recordPayment(req.auth!.userId,unit(req),requireRouteParam(req,'runId'),paymentSchema.parse(req.body)));
+});
+adminPayrollRouter.post('/payments/:paymentId/reverse',async(req,res)=>{
+ res.json(await reversePayment(req.auth!.userId,unit(req),requireRouteParam(req,'paymentId'),reversalSchema.parse(req.body)));
+});
+adminPayrollRouter.get('/payments/:paymentId/statement',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await paymentStatement(req.auth!.userId,unit(req),requireRouteParam(req,'paymentId')));
+});
+adminPayrollRouter.get('/paid-report',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await paidReport(req.auth!.userId,unit(req),paidReportSchema.parse(req.query)));
+});
+
+adminPayrollRouter.get('/tax/external-records',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await listExternalTax(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/tax/external-records',async(req,res)=>{
+ res.status(201).json(await recordExternalTax(req.auth!.userId,unit(req),externalTaxSchema.parse(req.body)));
 });
