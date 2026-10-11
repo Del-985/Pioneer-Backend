@@ -143,7 +143,7 @@ export async function reversePayment(user:string,unit:string,id:string,raw:z.inp
    throw conflict('The payment or request already has a reversal.');}
   const p=q.rows[0];
   const later=await c.query(`SELECT p.id FROM payroll_payments p LEFT JOIN payroll_payment_reversals v ON v.payment_id=p.id
-   WHERE p.legal_entity_id=$1 AND p.person_key=$2 AND p.created_at>$3 AND v.id IS NULL`,[p.legal_entity_id,p.person_key,p.created_at]);
+   WHERE p.legal_entity_id=$1 AND p.person_key=$2 AND p.id<>$3 AND p.created_at>=(SELECT created_at FROM payroll_payments WHERE id=$3) AND v.id IS NULL`,[p.legal_entity_id,p.person_key,id]);
   if(later.rows.length)throw conflict('Later recorded payroll depends on these wages. Reconcile it before reversing this payment.');
   await c.query(`INSERT INTO payroll_payment_reversals(payment_id,request_key,reason,evidence_reference,created_by_user_id)
    VALUES($1,$2,$3,$4,$5)`,[id,input.requestKey,input.reason,input.evidenceReference,user]);
