@@ -8,7 +8,7 @@ import {prepareNativeCalculation,approveNativeCalculation} from
  '../src/modules/employees/payroll-native.service.js';
 import {
  electionSchema,addElection,listElections,addOpening,listOpenings,
- prepareTax,approveTax,voidTax,listTax,taxDetail,employeeTaxPreview,
+ taxPrepareSchema,prepareTax,approveTax,voidTax,listTax,taxDetail,employeeTaxPreview,
 } from '../src/modules/employees/payroll-tax.service.js';
 
 const id=()=>randomUUID();const x={entity:id(),unit:id(),otherUnit:id(),
@@ -16,6 +16,11 @@ const id=()=>randomUUID();const x={entity:id(),unit:id(),otherUnit:id(),
  expense:id(),payable:id()};
 const bad=(status:number)=>(e:unknown)=>typeof e==='object'&&e!==null&&
  'statusCode' in e&&e.statusCode===status;
+const prepare={payDate:'2026-10-09',regularPayrollVerified:true as const,
+ employerTaxes:{ohioUiRateBps:285,futaEffectiveRateBps:60,verified:true as const,
+ recordReference:'Verified assigned total Ohio rate and full FUTA credit eligibility'}};
+const openingExtra={payDate:prepare.payDate,legalEmployerOnly:true as const,
+ priorFutaWagesCents:0,priorOhioUiWagesCents:0};
 const rules={employeeId:x.employee,effectiveOn:'2026-09-01',w4FormYear:2026,
  federalStatus:'single' as const,federalTwoJobs:false,
  federalStep3CreditsCents:0,federalStep4aIncomeCents:0,
@@ -62,34 +67,34 @@ test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable revi
  await postPayroll(x.manager,x.unit,run.id);
  await prepareNativeCalculation(x.manager,x.unit,run.id);
  await approveNativeCalculation(x.manager,x.unit,run.id);
- await assert.rejects(prepareTax(x.manager,x.unit,run.id,{}),bad(409));
+ await assert.rejects(prepareTax(x.manager,x.unit,run.id,prepare),bad(409));
  await assert.rejects(addElection(x.worker,x.unit,rules),bad(403));
  assert.equal(electionSchema.safeParse({...rules,signedFederalW4OnFile:false}).success,false);
  assert.equal(electionSchema.safeParse({...rules,toledoWorkplaceConfirmed:false}).success,false);
  assert.equal(electionSchema.safeParse({...rules,schoolDistrictBasis:'traditional',
-   schoolDistrictCode:'1234',schoolDistrictRateBps:100}).success,false);
+   schoolDistrictCode:'1234',schoolDistrictRateBps:100}).success,true);
  await assert.rejects(addElection(x.manager,x.unit,{...rules,
   employeeId:x.otherEmployee}),bad(404));
  const election=(await addElection(x.manager,x.unit,rules)).data;
  assert.ok(election.id);
  assert.equal((await listElections(x.manager,x.unit)).data.length,1);
- await assert.rejects(prepareTax(x.manager,x.unit,run.id,{}),bad(409));
+ await assert.rejects(prepareTax(x.manager,x.unit,run.id,prepare),bad(409));
  await assert.rejects(addOpening(x.worker,x.unit,run.id,{
-  employeeId:x.employee,priorSocialSecurityWagesCents:0,
+  ...openingExtra,employeeId:x.employee,priorSocialSecurityWagesCents:0,
   priorMedicareWagesCents:0,verifiedFromPayrollRecords:true,
   recordReference:'Signed opening balance reconciliation records are on file',
  }),bad(403));
  await addOpening(x.manager,x.unit,run.id,{
-  employeeId:x.employee,priorSocialSecurityWagesCents:0,
+  ...openingExtra,employeeId:x.employee,priorSocialSecurityWagesCents:0,
   priorMedicareWagesCents:0,verifiedFromPayrollRecords:true,
   recordReference:'Verified zero prior wages against initial payroll records',
  });
  assert.equal((await listOpenings(x.manager,x.unit,run.id)).data.length,1);
- const draft=(await prepareTax(x.manager,x.unit,run.id,{})).data;
+ const draft=(await prepareTax(x.manager,x.unit,run.id,prepare)).data;
  assert.equal(draft.status,'draft');
  assert.equal(draft.canDisburse,false);
  assert.equal(draft.projectedNetIsFinal,false);
- await assert.rejects(prepareTax(x.manager,x.unit,run.id,{}),bad(409));
+ await assert.rejects(prepareTax(x.manager,x.unit,run.id,prepare),bad(409));
  let detail=(await taxDetail(x.manager,x.unit,run.id)).data;
  assert.equal(detail.lines.length,1);
  assert.equal(detail.lines[0].grossCents,95000);
@@ -100,9 +105,21 @@ test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable revi
  assert.ok(detail.lines[0].employerMedicareCents>0);
  assert.equal(detail.lines[0].projectedNetCents,
   detail.lines[0].grossCents-detail.lines[0].totalWithholdingCents);
- assert.equal(detail.employerOtherTaxStatus,'not_calculated');
+ assert.equal(detail.employerOtherTaxStatus,'calculated_from_verified_rates');
+ assert.equal(detail.payDate,'2026-10-09');
+ assert.equal(detail.employerFutaCents,570);
+ assert.equal(detail.employerOhioUiCents,2708);
+ assert.equal(taxPrepareSchema.safeParse({}).success,false);
+ await assert.rejects(prepareTax(x.manager,x.unit,run.id,{...prepare,payDate:'2027-01-01'}),bad(409));
+ await assert.rejects(pool.query(`UPDATE payroll_tax_calculations SET pay_date='2026-10-10' WHERE id=$1`,[draft.id]));
  assert.equal((await employeeTaxPreview(x.worker,x.unit)).data.length,0,
   'Draft withholding is private to management');
+ // Replacing wage evidence is append-only and invalidates a previously prepared draft.
+ await addOpening(x.manager,x.unit,run.id,{...openingExtra,employeeId:x.employee,
+  priorSocialSecurityWagesCents:50000,priorMedicareWagesCents:50000,
+  priorFutaWagesCents:50000,priorOhioUiWagesCents:50000,
+  verifiedFromPayrollRecords:true,recordReference:'Corrected verified paid wages for this legal employer only'});
+ await assert.rejects(approveTax(x.manager,x.unit,run.id),bad(409));
  // A signed W-4 replacing the prior election must fail approval until recomputed.
  await addElection(x.manager,x.unit,{...rules,
   effectiveOn:'2026-09-20',federalStep4cExtraCents:1500,
@@ -110,7 +127,7 @@ test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable revi
  await assert.rejects(approveTax(x.manager,x.unit,run.id),bad(409));
  await voidTax(x.manager,x.unit,run.id,{
   reason:'Recalculate after updated signed employee W-4 elections'});
- const again=(await prepareTax(x.manager,x.unit,run.id,{})).data;
+ const again=(await prepareTax(x.manager,x.unit,run.id,prepare)).data;
  assert.notEqual(again.id,draft.id);
  assert.equal((await approveTax(x.manager,x.unit,run.id)).data.status,'approved');
  await assert.rejects(voidTax(x.manager,x.unit,run.id,{
