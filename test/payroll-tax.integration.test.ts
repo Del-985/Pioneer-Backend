@@ -1,3 +1,5 @@
+import {filingContext,prepareFiling,reviewFiling,filingDetail,download941} from '../src/modules/employees/payroll-filing.service.js';
+import {PDFDocument} from 'pdf-lib';
 import {recordExternalTax,listExternalTax,recordPayment,reversePayment,listPayments,paidReport,employeePayments,paymentStatement} from '../src/modules/employees/payroll-payments.service.js';
 import {prepareProvider} from '../src/modules/employees/payroll-provider.service.js';
 import assert from 'node:assert/strict';
@@ -34,7 +36,7 @@ const rules={employeeId:x.employee,effectiveOn:'2026-09-01',w4FormYear:2026,
  recordReference:'Signed W-4 and Ohio IT-4 stored in personnel files',
 };
 after(async()=>{await pool.end();});
-test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable review, employee isolation and no pay',async()=>{
+test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable review, employee isolation and no pay',async(t)=>{
  const slug='tax-'+x.entity.slice(0,8);
  await pool.query(`INSERT INTO legal_entities(id,legal_name,display_name,slug)
  VALUES($1,'Native Tax Test','Native Tax Test',$2)`,[x.entity,slug]);
@@ -188,6 +190,27 @@ test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable revi
  assert.equal(report.paymentCount,1);assert.equal(report.totals.gross_cents,95000);
  assert.equal(report.taxReturnFiled,false);
  assert.equal((await paidReport(x.manager,x.unit,{year:2026,quarter:3})).data.paymentCount,0);
+ const filingInput={year:2026 as const,quarter:4 as const,ein:'123456789',street:'101 Test Street',city:'Toledo',state:'OH' as const,zip:'43604',
+  signerName:'Test Manager',signerTitle:'Owner',phone:'419-555-0100',depositSchedule:'monthly' as const,priorQuarterTaxCents:250000,
+  federalDepositIds:[],censusEmployees:0,allWagesIncluded:true as const,ordinaryPayrollOnly:true as const,form941Required:true as const,
+  originalReturn:true as const,depositsReconciled:true as const,censusVerified:true as const,applyOverpaymentToNextReturn:true as const,
+  reviewReference:'Employer-wide payroll and deposit records reconciled'};
+ await assert.rejects(filingContext(x.worker,x.unit,4),bad(403));
+ assert.equal((await filingContext(x.manager,x.otherUnit,4)).data.paymentCount,1,'Filing scope includes every unit of the employer');
+ const packet=(await prepareFiling(x.manager,x.unit,filingInput)).data;
+ assert.equal(packet.figures.lines.line2,95000);assert.equal(packet.blockers.length,0);
+ t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-15T12:00:00Z')});
+ try{
+  await assert.rejects(reviewFiling(x.manager,x.unit,packet.id),bad(409),'Open quarter cannot be finalized');
+  t.mock.timers.setTime(new Date('2027-01-05T12:00:00Z').getTime());
+  await reviewFiling(x.manager,x.unit,packet.id);
+  const file=await download941(x.manager,x.unit,packet.id);
+  const pdf=await PDFDocument.load(file.pdf);const fields=pdf.getForm();
+  assert.equal(fields.getTextField('topmostSubform[0].Page1[0].f1_13[0]').getText(),'950');
+  assert.equal(fields.getTextField('topmostSubform[0].Page1[0].Header[0].EntityArea[0].f1_1[0]').getText(),'12');
+  assert.ok(fields.getCheckBox('topmostSubform[0].Page1[0].Header[0].ReportForQuarter[0].c1_1[3]').isChecked());
+  assert.equal((await filingDetail(x.manager,x.unit,packet.id)).data.status,'reviewed');
+ }finally{t.mock.timers.reset();}
  const oldDigest=report.reportDigest;
  const reversal={requestKey:id(),reason:'Check voided before delivery; full payment cancelled',
   evidenceReference:'Voided check retained in payroll records',fullPaymentVoidedOrReturned:true as const};
@@ -195,6 +218,7 @@ test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable revi
  await reversePayment(x.manager,x.unit,payment.id,reversal);
  report=(await paidReport(x.manager,x.unit,{year:2026,quarter:4})).data;
  assert.equal(report.paymentCount,0);assert.equal(report.reversedCount,1);
+ assert.equal((await filingDetail(x.manager,x.unit,packet.id)).data.stale,true,'Reversals invalidate prepared returns');
  assert.equal(report.totals.gross_cents,0);assert.notEqual(report.reportDigest,oldDigest);
  assert.match((await paymentStatement(x.manager,x.unit,payment.id)).data.html,/REVERSED PAYMENT RECORD/);
  await assert.rejects(recordPayment(x.manager,x.unit,run.id,{...paymentInput,requestKey:id(),reference:'REISSUE'}),bad(409));
