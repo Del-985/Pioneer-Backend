@@ -21,7 +21,7 @@ export async function form941Pdf(packet:any):Promise<Uint8Array>{
  for(const [key,index] of Object.entries(map)){if((key==='line14'||key==='line15')&&!l[key])continue;dollars(1,'f1_',index,l[key]);}
  if(!l.line5aWages&&!l.line5cWages)check(1,'c1_3[0]');
  if(l.line15>0)check(1,'c1_4[0]'); // Explicitly authorized carry-forward, never assumed refund routing.
- if(l.line12<250000||input.priorQuarterTaxCents<250000){check(2,'c2_1[0]');}else{
+ if(l.line12<250000||(input.priorQuarterTaxCents<250000&&l.line12<10000000)){check(2,'c2_1[0]');}else{
  check(2,'c2_1[1]');
  packet.figures.monthly.forEach((m:any,i:number)=>dollars(2,'f2_',1+i*2,m.federalLiability));
  dollars(2,'f2_',7,l.line12);
