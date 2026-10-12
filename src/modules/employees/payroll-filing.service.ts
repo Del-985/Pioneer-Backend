@@ -10,7 +10,7 @@ export const filingInputSchema=z.object({year:z.literal(2026),quarter:z.union([z
  ein:z.string().regex(/^\d{2}-?\d{7}$/).transform(x=>x.replace('-','')).refine(x=>!/^0+$/.test(x),'Enter an assigned EIN'),
  street:ascii(55),city:ascii(35),state:z.literal('OH'),zip:z.string().regex(/^\d{5}(-\d{4})?$/),
  signerName:ascii(35),signerTitle:ascii(35),phone:z.string().regex(/^[0-9()+ .-]{10,20}$/),
- depositSchedule:z.enum(['monthly','semiweekly']),
+ depositSchedule:z.enum(['monthly','semiweekly']),priorQuarterTaxCents:z.number().int().min(0).max(5000000000),
  federalDepositIds:z.array(z.string().uuid()).max(500).refine(x=>new Set(x).size===x.length,'Duplicate deposit selection'),
  priorCreditCents:z.number().int().min(0).max(5000000000).default(0),creditEvidence:z.string().trim().max(500).default(''),
  censusEmployees:z.number().int().min(0).max(100000),seasonalEmployer:z.boolean().default(false),

@@ -191,7 +191,7 @@ test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable revi
  assert.equal(report.taxReturnFiled,false);
  assert.equal((await paidReport(x.manager,x.unit,{year:2026,quarter:3})).data.paymentCount,0);
  const filingInput={year:2026 as const,quarter:4 as const,ein:'123456789',street:'101 Test Street',city:'Toledo',state:'OH' as const,zip:'43604',
-  signerName:'Test Manager',signerTitle:'Owner',phone:'419-555-0100',depositSchedule:'monthly' as const,
+  signerName:'Test Manager',signerTitle:'Owner',phone:'419-555-0100',depositSchedule:'monthly' as const,priorQuarterTaxCents:250000,
   federalDepositIds:[],censusEmployees:0,allWagesIncluded:true as const,ordinaryPayrollOnly:true as const,form941Required:true as const,
   originalReturn:true as const,depositsReconciled:true as const,censusVerified:true as const,applyOverpaymentToNextReturn:true as const,
   reviewReference:'Employer-wide payroll and deposit records reconciled'};
