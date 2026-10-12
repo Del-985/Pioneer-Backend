@@ -1,3 +1,4 @@
+import {filingInputSchema,filingContext,prepareFiling,listFilings,filingDetail,reviewFiling,download941} from './payroll-filing.service.js';
 import {externalTaxSchema,recordExternalTax,listExternalTax,paymentSchema,reversalSchema,paidReportSchema,recordPayment,reversePayment,listPayments,paidReport,paymentStatement} from './payroll-payments.service.js';
 import {
  electionSchema,openingSchema,taxPrepareSchema,taxVoidSchema,
@@ -225,4 +226,28 @@ adminPayrollRouter.get('/tax/external-records',async(req,res)=>{
 });
 adminPayrollRouter.post('/tax/external-records',async(req,res)=>{
  res.status(201).json(await recordExternalTax(req.auth!.userId,unit(req),externalTaxSchema.parse(req.body)));
+});
+
+adminPayrollRouter.get('/filings/context',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await filingContext(req.auth!.userId,unit(req),z.coerce.number().int().min(3).max(4).parse(req.query.quarter)));
+});
+adminPayrollRouter.get('/filings',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');res.json(await listFilings(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/filings',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');res.status(201).json(await prepareFiling(req.auth!.userId,unit(req),filingInputSchema.parse(req.body)));
+});
+adminPayrollRouter.get('/filings/:packetId',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');res.json(await filingDetail(req.auth!.userId,unit(req),requireRouteParam(req,'packetId')));
+});
+adminPayrollRouter.post('/filings/:packetId/review',async(req,res)=>{
+ const input=z.object({reviewed:z.literal(true)}).strict().parse(req.body);void input;
+ res.json(await reviewFiling(req.auth!.userId,unit(req),requireRouteParam(req,'packetId')));
+});
+adminPayrollRouter.get('/filings/:packetId/form-941',async(req,res)=>{
+ const file=await download941(req.auth!.userId,unit(req),requireRouteParam(req,'packetId'));
+ res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');
+ res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','attachment; filename="'+file.filename+'"');
+ res.send(Buffer.from(file.pdf));
 });

@@ -70,3 +70,11 @@ Users receive scoped role assignments to the platform, legal entity, or business
 4. Customers, contacts, addresses, files, and forms.
 5. Scheduling, work orders, estimates, invoices, and payments.
 6. Bookkeeping and reporting.
+
+### Quarterly tax preparation
+
+`/payroll/filings` prepares original 2026 Q3/Q4 Form 941 for verified monthly depositors, consolidating recorded payments across the legal employer. Migration 061 restricts access to entity/platform administrators and stores immutable packets and reviews. Closed-quarter review and a fresh source digest are required for PDF export. Payments, reversals, missing payment records, legacy provider payroll, deposits, and unsupported deposit schedules are reconciled or blocked. No payment or agency submission occurs.
+
+The unsigned interactive PDF uses the official March 2026 IRS Form 941 (`assets/tax/2026/f941.pdf`, retrieved from https://www.irs.gov/pub/irs-pdf/f941.pdf). Taxable wage bases come from verified prior wages, not reverse-calculated withholding; line 7 adjusts employee FICA rounding only. Deposit selections and any prior credit require agency reconciliation. Print/sign both return pages or use an authorized filing channel after review. Keep the assets directory in deployments.
+
+CSV worksheets provide monthly and payday Ohio, residential school-district, and Toledo withholding totals. These are not agency returns; verify each assigned filing/payment frequency. Form 940, W-2/W-3, Ohio annual reconciliations, unemployment wage-detail returns, amended returns and Schedule B are not generated. See https://www.irs.gov/instructions/i941, https://tax.ohio.gov/business/employer-withholding/employer-withholding and https://toledo.oh.gov/pay-taxes. Preparing a packet does not resolve prior limitations of the gross wage engine; independently verified complete payroll is required.
