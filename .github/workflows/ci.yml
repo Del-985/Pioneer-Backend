@@ -56,3 +56,14 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Verify isolated payroll sandbox
+        env:
+          APP_ENV: sandbox
+          SESSION_COOKIE_NAME: pioneer_sandbox_session
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pioneer_payroll_sandbox
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -c 'CREATE DATABASE pioneer_payroll_sandbox'
+          npm run migrate
+          node --import tsx --test test/sandbox.integration.test.ts

@@ -1,3 +1,4 @@
+import {env} from '../../config/env.js';
 import {SS_WAGE_BASE_CENTS} from './payroll-tax-math.js';
 import {statementHtml} from './payroll-statement.js';
 import {createHash} from 'node:crypto';
@@ -177,7 +178,7 @@ export async function paymentStatement(user:string,unit:string,id:string){
  await assertBusinessUnitPermission(user,unit,'payroll.payments.read');
  const q=await pool.query(paymentSelect+' WHERE p.business_unit_id=$1 AND p.id=$2',[unit,id]);
  if(!q.rows[0])throw new HttpError(404,'PAYMENT_NOT_FOUND','Payment not found.');
- const p=mapped(q.rows[0]);return{data:{filename:'pay-statement-'+p.payDate+'-'+id+'.html',html:statementHtml(p)}};
+ const p=mapped(q.rows[0]);return{data:{filename:'pay-statement-'+p.payDate+'-'+id+'.html',html:statementHtml(p).replace('<h1>',env.APP_ENV==='sandbox'?'<h1 style="color:red">TEST ONLY — FICTIONAL PAY STATEMENT</h1><h1>':'<h1>')}};
 }
 
 export const externalTaxSchema=z.object({requestKey:z.string().uuid(),kind:z.enum(['filing','remittance']),
