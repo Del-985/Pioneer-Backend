@@ -7,7 +7,7 @@ services:
     branch: codex/payroll-sandbox
     region: oregon
     plan: free
-    autoDeployTrigger: off
+    autoDeployTrigger: 'off'
     buildCommand: bash scripts/build-sandbox.sh
     startCommand: node dist/db/migrate.js && node dist/db/bootstrap-admin.js && node dist/db/sandbox-bootstrap.js && node dist/server.js
     healthCheckPath: /api/health/ready
