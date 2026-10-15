@@ -1,0 +1,45 @@
+# Dedicated practice stack. No production resource names or credentials.
+services:
+  - type: web
+    name: pioneer-payroll-sandbox
+    runtime: node
+    repo: https://github.com/Del-985/Pioneer-Backend
+    branch: codex/payroll-sandbox
+    region: oregon
+    plan: free
+    autoDeployTrigger: 'off'
+    buildCommand: bash scripts/build-sandbox.sh
+    startCommand: node dist/db/migrate.js && node dist/db/bootstrap-admin.js && node dist/db/sandbox-bootstrap.js && node dist/server.js
+    healthCheckPath: /api/health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ENV
+        value: sandbox
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pioneer-payroll-sandbox-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: 'false'
+      - key: CORS_ORIGINS
+        value: ''
+      - key: SESSION_COOKIE_NAME
+        value: pioneer_sandbox_session
+      - key: CUSTOMER_SESSION_COOKIE_NAME
+        value: pioneer_sandbox_customer_session
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        value: sandbox-admin@example.invalid
+      - key: BOOTSTRAP_ADMIN_NAME
+        value: Sandbox Administrator
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false
+
+databases:
+  - name: pioneer-payroll-sandbox-db
+    databaseName: pioneer_payroll_sandbox
+    user: pioneer_sandbox
+    region: oregon
+    plan: free
+    postgresMajorVersion: '16'
+    ipAllowList: []

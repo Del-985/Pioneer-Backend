@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
-import {PDFDocument,StandardFonts} from 'pdf-lib';
+import {env} from '../../config/env.js';
+import {PDFDocument,StandardFonts,rgb,degrees} from 'pdf-lib';
 export async function form941Pdf(packet:any):Promise<Uint8Array>{
  const doc=await PDFDocument.load(await readFile(resolve('assets/tax/2026/f941.pdf')));
  const form=doc.getForm();form.deleteXFA();
@@ -31,5 +32,6 @@ export async function form941Pdf(packet:any):Promise<Uint8Array>{
  text(2,'f2_13[0]',input.signerName);text(2,'f2_14[0]',input.signerTitle);text(2,'f2_15[0]',input.phone);
  form.updateFieldAppearances(font);
  doc.setTitle('Unsigned Form 941 - 2026 Q'+packet.quarter);doc.setSubject('Review both return pages and sign before submitting. Not filed by Pioneer.');
+ if(env.APP_ENV==='sandbox'){for(const page of doc.getPages()){page.drawText('TEST ONLY - DO NOT FILE',{x:60,y:300,size:34,font,color:rgb(0.8,0,0),opacity:0.55,rotate:degrees(30)});page.drawText('PIONEER PAYROLL SANDBOX - FICTIONAL DATA',{x:60,y:12,size:10,font,color:rgb(0.8,0,0)});}}
  return doc.save();
 }

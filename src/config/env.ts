@@ -1,7 +1,10 @@
 import 'dotenv/config';
+import {sandboxConfigurationErrors} from './sandbox-guard.js';
 import { z } from 'zod';
 
 const envSchema = z.object({
+  APP_ENV: z.enum(['production','sandbox']).default('production'),
+  RENDER_EXTERNAL_URL: z.string().url().optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().max(65535).default(3000),
   DATABASE_URL: z.string().min(1),
@@ -37,6 +40,7 @@ const envSchema = z.object({
   OBJECT_STORAGE_FORCE_PATH_STYLE: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
   OBJECT_STORAGE_PRESIGN_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
 }).superRefine((value, ctx) => {
+  for(const message of sandboxConfigurationErrors(value))ctx.addIssue({code:z.ZodIssueCode.custom,message});
   if (value.SMTP_HOST && !value.SMTP_FROM) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['SMTP_FROM'], message: 'SMTP_FROM is required when SMTP_HOST is configured.' });
   }
@@ -82,6 +86,7 @@ export const env = {
   ...parsed.data,
   corsOrigins: Array.from(new Set([
     ...parsed.data.CORS_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean),
-    ...builtInCorsOrigins,
+    ...(parsed.data.APP_ENV==='sandbox'?[]:builtInCorsOrigins),
+    ...(parsed.data.APP_ENV==='sandbox'&&parsed.data.RENDER_EXTERNAL_URL?[parsed.data.RENDER_EXTERNAL_URL]:[]),
   ])),
 };

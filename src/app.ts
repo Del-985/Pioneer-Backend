@@ -1,4 +1,6 @@
 import cors from 'cors';
+import {resolve} from 'node:path';
+import {sandboxRouter} from './modules/sandbox/sandbox.routes.js';
 import express from 'express';
 import helmet from 'helmet';
 import pinoHttp from 'pino-http';
@@ -41,7 +43,16 @@ app.use(express.json({
   },
 }));
 
+app.get('/api/environment',(_req,res)=>res.json({data:{environment:env.APP_ENV}}));
+if(env.APP_ENV==='sandbox'){
+ app.use((_req,res,next)=>{res.setHeader('X-Pioneer-Environment','sandbox');res.setHeader('X-Robots-Tag','noindex, nofollow');next();});
+ app.use('/api/sandbox',sandboxRouter);
+}
 app.use('/api', apiRouter);
+if(env.APP_ENV==='sandbox'){
+ app.use(express.static(resolve('sandbox-admin/dist')));
+ app.get('/{*path}',(req,res,next)=>{if(req.path.startsWith('/api/'))return next();res.sendFile(resolve('sandbox-admin/dist/index.html'));});
+}
 
 app.use(notFoundHandler);
 app.use(errorHandler);
