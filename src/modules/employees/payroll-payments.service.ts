@@ -158,7 +158,7 @@ export async function listPayments(user:string,unit:string){
 export async function employeePayments(user:string,unit:string){
  const employee=await employeeSelf(user,unit);
  const q=await pool.query(paymentSelect+' WHERE p.business_unit_id=$1 AND p.employee_id=$2 ORDER BY p.pay_date DESC,p.created_at DESC',[unit,employee]);
- return{data:q.rows.map(p=>{const x=mapped(p);return{id:x.id,payDate:x.payDate,status:x.status,statement:x.statement};})};
+ return{data:q.rows.map(p=>{const x=mapped(p);return{id:x.id,runId:x.runId,payDate:x.payDate,status:x.status,netPaidCents:x.netPaidCents,method:x.method,reference:x.reference,statement:x.statement};})};
 }
 export async function paidReport(user:string,unit:string,raw:z.input<typeof paidReportSchema>){
  const input=paidReportSchema.parse(raw);await assertBusinessUnitPermission(user,unit,'payroll.payments.read');
@@ -212,4 +212,11 @@ export async function listExternalTax(user:string,unit:string){
   amount_cents::text,confirmation_reference,evidence_reference,notes,created_at
   FROM payroll_tax_external_records WHERE business_unit_id=$1 ORDER BY created_at DESC LIMIT 500`,[unit]);
  return{data:q.rows};
+}
+
+export async function employeePaymentStatement(user:string,unit:string,id:string){
+ const employee=await employeeSelf(user,unit);
+ const q=await pool.query(paymentSelect+' WHERE p.business_unit_id=$1 AND p.employee_id=$2 AND p.id=$3',[unit,employee,id]);
+ if(!q.rows[0])throw new HttpError(404,'PAYMENT_NOT_FOUND','Pay stub not found.');
+ const p=mapped(q.rows[0]);return{data:{filename:'pay-stub-'+p.payDate+'-'+id+'.html',html:statementHtml(p)}};
 }
