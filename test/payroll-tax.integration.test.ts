@@ -1,6 +1,6 @@
 import {filingContext,prepareFiling,reviewFiling,filingDetail,download941} from '../src/modules/employees/payroll-filing.service.js';
 import {PDFDocument} from 'pdf-lib';
-import {recordExternalTax,listExternalTax,recordPayment,reversePayment,listPayments,paidReport,employeePayments,paymentStatement} from '../src/modules/employees/payroll-payments.service.js';
+import {employeePaymentStatement,recordExternalTax,listExternalTax,recordPayment,reversePayment,listPayments,paidReport,employeePayments,paymentStatement} from '../src/modules/employees/payroll-payments.service.js';
 import {prepareProvider} from '../src/modules/employees/payroll-provider.service.js';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -183,6 +183,9 @@ test('v0.4.4 tax preview enforces signed elections, accurate YTD, immutable revi
  assert.match(html,/101 &lt;Main&gt; Street/);
  assert.match(html,/2026-09-28 through 2026-10-04/);
  assert.match(html,/Net paid/);
+ assert.match(html,/Final Pay Stub/);
+ assert.equal((await employeePaymentStatement(x.worker,x.unit,payment.id)).data.html,html);
+ await assert.rejects(employeePaymentStatement(x.other,x.otherUnit,payment.id),bad(404));
  await pool.query("UPDATE employees SET display_name='Renamed employee' WHERE id=$1",[x.employee]);
  assert.equal((await listPayments(x.manager,x.unit)).data[0].statement.employeeName,'Tax Worker','Statement identity is frozen');
  await assert.rejects(pool.query('DELETE FROM payroll_payments WHERE id=$1',[payment.id]));
