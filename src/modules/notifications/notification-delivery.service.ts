@@ -351,6 +351,7 @@ async function sendTextBeeSms(recipient: string, message: string) {
 }
 
 export async function processEmailNotifications(limit = env.NOTIFICATION_BATCH_SIZE) {
+  if(env.APP_ENV==='sandbox')return {claimed:0,sent:0,failed:0};
   const transport = nodemailer.createTransport(requireSmtpConfig());
   const batch = await claimBatch('email', limit);
   let sent = 0;
@@ -378,6 +379,7 @@ export async function processEmailNotifications(limit = env.NOTIFICATION_BATCH_S
 }
 
 export async function processSmsNotifications(limit = env.NOTIFICATION_BATCH_SIZE) {
+  if(env.APP_ENV==='sandbox')return {claimed:0,sent:0,failed:0,fellBackToEmail:0};
   const batch = await claimBatch('sms', limit);
   let sent = 0;
   let failed = 0;
