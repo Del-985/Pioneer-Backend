@@ -86,13 +86,16 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
   await assert.rejects(getAdminTimesheets(id.viewer,id.firstUnit,{weekStart:week}),isError(403));
 
 
+  // A rapid synthetic clock-in/out can be shorter than one second; give this
+  // approved test shift measurable worked time before awarding fractional PTO.
+  await pool.query(`UPDATE employee_time_entries SET clock_in_at=clock_in_at-interval '3 hours' WHERE id=$1`,[start.id]);
   const approved=(await reviewTimeEntry(id.manager,id.firstUnit,start.id,
     {decision:'approve',reason:'Verified against dispatch records'})).data;
   assert.equal(approved.reviewStatus,'approved');
   await assert.rejects(reviewTimeEntry(id.manager,id.firstUnit,start.id,
     {decision:'approve'}),isError(409));
 
-  const clockInAt=new Date(start.clockInAt);
+  const clockInAt=new Date(new Date(start.clockInAt).getTime()-3*3600000);
   const correctedStart=new Date(clockInAt.getTime()-2*60*60*1000);
   const correctedEnd=new Date(clockInAt.getTime()-15*60*1000);
   const corrected=(await correctTimeEntry(id.manager,id.firstUnit,start.id,{
