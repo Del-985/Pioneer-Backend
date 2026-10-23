@@ -1,3 +1,4 @@
+import {employeeLeave} from './employee-leave.service.js';
 import {employeePayments,employeePaymentStatement} from './payroll-payments.service.js';
 import {employeeTaxPreview} from './payroll-tax.service.js';
 import {employeeNativePreview} from './payroll-native.service.js';
@@ -218,4 +219,9 @@ employeePortalRouter.get('/pay/paid-statements/:paymentId/download',async(req,re
  const paymentId=z.string().uuid().parse(req.params.paymentId);
  res.setHeader('Cache-Control','private, no-store');
  res.json(await employeePaymentStatement(req.auth!.userId,businessUnitId,paymentId));
+});
+
+employeePortalRouter.get('/leave/balances',async(req,res)=>{
+  const {businessUnitId}=timeQuerySchema.pick({businessUnitId:true}).parse(req.query);
+  res.json(await employeeLeave(req.auth!.userId,businessUnitId));
 });

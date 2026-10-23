@@ -86,13 +86,16 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
   await assert.rejects(getAdminTimesheets(id.viewer,id.firstUnit,{weekStart:week}),isError(403));
 
 
+  // A rapid synthetic clock-in/out can be shorter than one second; give this
+  // approved test shift measurable worked time before awarding fractional PTO.
+  await pool.query(`UPDATE employee_time_entries SET clock_in_at=clock_in_at-interval '3 hours' WHERE id=$1`,[start.id]);
   const approved=(await reviewTimeEntry(id.manager,id.firstUnit,start.id,
     {decision:'approve',reason:'Verified against dispatch records'})).data;
   assert.equal(approved.reviewStatus,'approved');
   await assert.rejects(reviewTimeEntry(id.manager,id.firstUnit,start.id,
     {decision:'approve'}),isError(409));
 
-  const clockInAt=new Date(start.clockInAt);
+  const clockInAt=new Date(new Date(start.clockInAt).getTime()-3*3600000);
   const correctedStart=new Date(clockInAt.getTime()-2*60*60*1000);
   const correctedEnd=new Date(clockInAt.getTime()-15*60*1000);
   const corrected=(await correctTimeEntry(id.manager,id.firstUnit,start.id,{
@@ -101,6 +104,11 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
     reason:'Corrected against the verified overnight job log',
   })).data;
   assert.equal(corrected.reviewStatus,'submitted');
+  // Correcting approved time reverses previous accrual until reapproved.
+  const reversed=await pool.query(`SELECT leave_type,round(sum(hours_delta),6)::text AS balance
+    FROM employee_leave_ledger WHERE time_entry_id=$1 GROUP BY leave_type`,[start.id]);
+  assert.equal(reversed.rows.length,2);
+  assert.ok(reversed.rows.every(row=>Number(row.balance)===0));
   assert.equal(corrected.workedSeconds, (105-15)*60);
   assert.equal(corrected.paidBreakSeconds,10*60);
   assert.equal(corrected.unpaidBreakSeconds,15*60);
@@ -117,6 +125,10 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
   assert.equal((await reviewTimeEntry(id.manager,id.firstUnit,start.id,{
     decision:'approve',reason:'Verified after manual review',
   })).data.reviewStatus,'approved');
+  const credited=await pool.query(`SELECT leave_type,round(sum(hours_delta),6)::text AS balance
+    FROM employee_leave_ledger WHERE time_entry_id=$1 GROUP BY leave_type`,[start.id]);
+  assert.deepEqual(credited.rows.map(row=>row.leave_type).sort(),['pto','sick']);
+  assert.ok(credited.rows.every(row=>Math.abs(Number(row.balance)-0.05)<0.000001));
   const history=await getEntryHistory(id.manager,id.firstUnit,start.id);
   assert.ok(history.data.some(x=>x.action==='clock_in'));
   assert.ok(history.data.some(x=>x.action==='break_start'));

@@ -1,3 +1,4 @@
+import {adminLeave} from './employee-leave.service.js';
 import {filingInputSchema,filingContext,prepareFiling,listFilings,filingDetail,reviewFiling,download941} from './payroll-filing.service.js';
 import {externalTaxSchema,recordExternalTax,listExternalTax,paymentSchema,reversalSchema,paidReportSchema,recordPayment,reversePayment,listPayments,paidReport,paymentStatement} from './payroll-payments.service.js';
 import {
@@ -250,4 +251,8 @@ adminPayrollRouter.get('/filings/:packetId/form-941',async(req,res)=>{
  res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');
  res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','attachment; filename="'+file.filename+'"');
  res.send(Buffer.from(file.pdf));
+});
+
+adminPayrollRouter.get('/leave/balances',async(req,res)=>{
+  res.json(await adminLeave(req.auth!.userId,unit(req)));
 });
