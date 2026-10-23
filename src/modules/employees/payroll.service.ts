@@ -432,18 +432,25 @@ export async function myGrossStatements(userId:string,unit:string){
   const r=await pool.query<{
     run_id:string;period_start:string;period_end:string;status:string;
     regular_seconds:string;overtime_seconds:string;gross_cents:string;
-    regular_cents:string;overtime_cents:string;
+    regular_cents:string;overtime_cents:string;pto_cents:string;pto_seconds:string;
   }>(`SELECT run.id AS run_id,run.period_start::text,run.period_end::text,run.status,
-    sum(l.regular_seconds)::text AS regular_seconds,sum(l.overtime_seconds)::text AS overtime_seconds,
-    sum(l.gross_cents)::text AS gross_cents,sum(l.regular_cents)::text AS regular_cents,
-    sum(l.overtime_cents)::text AS overtime_cents
-    FROM payroll_run_lines l JOIN payroll_runs run ON run.id=l.payroll_run_id
-    WHERE run.business_unit_id=$1 AND l.employee_id=$2 AND run.status='posted'
+    sum(t.regular_seconds)::text AS regular_seconds,sum(t.overtime_seconds)::text AS overtime_seconds,
+    sum(t.regular_cents+t.overtime_cents+t.pto_cents)::text AS gross_cents,
+    sum(t.regular_cents)::text AS regular_cents,sum(t.overtime_cents)::text AS overtime_cents,
+    sum(t.pto_cents)::text AS pto_cents,sum(t.pto_seconds)::text AS pto_seconds
+    FROM (SELECT payroll_run_id,employee_id,regular_seconds,overtime_seconds,regular_cents,overtime_cents,
+           0::bigint AS pto_cents,0::bigint AS pto_seconds FROM payroll_run_lines
+       UNION ALL
+       SELECT payroll_run_id,employee_id,0::bigint,0::bigint,0::bigint,0::bigint,
+         pto_cents,paid_seconds::bigint FROM payroll_run_pto_lines) t
+    JOIN payroll_runs run ON run.id=t.payroll_run_id
+    WHERE run.business_unit_id=$1 AND t.employee_id=$2 AND run.status='posted'
     GROUP BY run.id ORDER BY run.period_start DESC LIMIT 50`,[unit,employeeId]);
   return{data:r.rows.map(x=>({
     runId:x.run_id,periodStart:x.period_start,periodEnd:x.period_end,
     regularSeconds:asNum(x.regular_seconds),overtimeSeconds:asNum(x.overtime_seconds),
     regularCents:asNum(x.regular_cents),overtimeCents:asNum(x.overtime_cents),
+    ptoCents:asNum(x.pto_cents),ptoSeconds:asNum(x.pto_seconds),
     grossCents:asNum(x.gross_cents),status:'recorded_in_books',
     netPay:null,paymentStatus:'not_recorded',
   }))};
