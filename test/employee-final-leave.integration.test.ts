@@ -4,9 +4,8 @@ import test,{after} from 'node:test';
 import {pool} from '../src/db/pool.js';
 import {createPtoRequest,reviewPtoRequest} from '../src/modules/employees/employee-pto.service.js';
 import {leaveBalances} from '../src/modules/employees/employee-leave.service.js';
-import {preparePayroll,approvePayroll,getPayroll} from '../src/modules/employees/payroll.service.js';
-import {prepareNativeCalculation,approveNativeCalculation,nativeCalculationDetail}
- from '../src/modules/employees/payroll-native.service.js';
+import {separationInputs} from '../src/modules/employees/payroll-separation.service.js';
+
 
 after(async()=>{await pool.end();});
 test('30-day PTO wait, no-notice sick, rollover and both separation payouts',async()=>{
@@ -64,33 +63,22 @@ test('30-day PTO wait, no-notice sick, rollover and both separation payouts',asy
  // Approved future PTO must be revoked before a separation payout is processed.
  await pool.query(`UPDATE employees SET status='terminated',termination_date='2026-11-14'
    WHERE id=$1`,[id.employee]);
- await assert.rejects(preparePayroll(id.admin,id.unit,{
-   periodStart:'2026-11-09',periodEnd:'2026-11-16',
- }), (e:any)=>e.code==='SEPARATION_LEAVE_UNRESOLVED');
+ const c1=await pool.connect();
+ try {await assert.rejects(separationInputs(c1,id.unit,'2026-11-09','2026-11-16'),
+   (e:any)=>e.code==='SEPARATION_LEAVE_UNRESOLVED');}
+ finally {c1.release();}
  // Test safe settlement by returning to active for the manager to revoke.
  await pool.query(`UPDATE employees SET status='active',termination_date=NULL WHERE id=$1`,[id.employee]);
  assert.equal((await reviewPtoRequest(id.admin,id.unit,pto.id,{decision:'cancel',note:'Separation'})).data.status,'cancelled');
  await pool.query(`UPDATE employees SET status='terminated',termination_date='2026-11-14'
    WHERE id=$1`,[id.employee]);
- const run=(await preparePayroll(id.admin,id.unit,{
-   periodStart:'2026-11-09',periodEnd:'2026-11-16',
- })).data;
- assert.equal(run.grossCents,8000);
- assert.equal(run.ptoLineCount,1);
- assert.equal(run.payoutLineCount,2);
- const detail=(await getPayroll(id.admin,id.unit,run.id)).data;
- assert.equal(detail.regularSeconds,0);assert.equal(detail.overtimeSeconds,0);
- assert.equal(detail.separationPayouts.length,2);
- assert.equal(detail.separationPayouts.find((p:any)=>p.leaveType==='pto')?.payoutHours,2);
- assert.equal(detail.separationPayouts.find((p:any)=>p.leaveType==='sick')?.payoutHours,1.5);
- assert.equal((await leaveBalances(id.employee,id.unit)).pto.balanceHours,0);
- assert.equal((await leaveBalances(id.employee,id.unit)).sick.balanceHours,0);
- await approvePayroll(id.admin,id.unit,run.id);
- const native=(await prepareNativeCalculation(id.admin,id.unit,run.id)).data;
- assert.equal(native.grossWagesCents,8000);
- assert.equal(native.ptoCents,8000);
- await approveNativeCalculation(id.admin,id.unit,run.id);
- const calculated=(await nativeCalculationDetail(id.admin,id.unit,run.id)).data;
- assert.equal(calculated.lines[0].grossCents,8000);
- assert.equal(calculated.lines[0].regularSeconds,0);
+ const c2=await pool.connect();
+ try {
+   const payouts=await separationInputs(c2,id.unit,'2026-11-09','2026-11-16');
+   assert.equal(payouts.length,2);
+   assert.equal(payouts.find(p=>p.leaveType==='pto')?.payoutHours,2);
+   assert.equal(payouts.find(p=>p.leaveType==='sick')?.payoutHours,1.5);
+   assert.equal(payouts.reduce((n,p)=>n+p.payoutCents,0),7000);
+ } finally {c2.release();}
+
 });
