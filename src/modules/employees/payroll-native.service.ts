@@ -253,8 +253,7 @@ function dbLine(x:NativeStored):NativeLine{
  return{
   employeeId:x.employee_id,employeeName:x.employee_name,
   regularSeconds:numeric(x.regular_seconds),overtimeSeconds:numeric(x.overtime_seconds),
-  regularCents:numeric(x.regular_cents),overtimeCents:numeric(x.overtime_cents),ptoCents:numeric(x.pto_cents),
-   ptoCents:numeric(x.pto_cents),ptoSeconds:numeric(x.pto_seconds),
+  regularCents:numeric(x.regular_cents),overtimeCents:numeric(x.overtime_cents),ptoCents:numeric(x.pto_cents),ptoSeconds:numeric(x.pto_seconds),
   adjustmentCents:numeric(x.adjustment_cents),grossCents,
   voluntaryDeductionCents,reimbursementCents:numeric(x.reimbursement_cents),
   deductionDetails:x.deduction_details,adjustmentDetails:x.adjustment_details,
