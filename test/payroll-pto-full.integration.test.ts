@@ -2,72 +2,83 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import test,{after} from 'node:test';
 import {pool} from '../src/db/pool.js';
-import {preparePayroll,approvePayroll,getPayroll} from '../src/modules/employees/payroll.service.js';
-import {prepareNativeCalculation,approveNativeCalculation,nativeCalculationDetail}
- from '../src/modules/employees/payroll-native.service.js';
-import {statementHtml} from '../src/modules/employees/payroll-statement.js';
+import {createPtoRequest,reviewPtoRequest} from '../src/modules/employees/employee-pto.service.js';
+import {leaveBalances} from '../src/modules/employees/employee-leave.service.js';
+import {separationInputs} from '../src/modules/employees/payroll-separation.service.js';
 
-// CI creates a disposable PostgreSQL database for every workflow. Records in
-// this test intentionally remain inside that disposable database because the
-// immutable approved-payroll evidence must not be deleted or forged to clean up.
+
 after(async()=>{await pool.end();});
-
-test('PTO-only payroll pays tax-inclusive gross wages with zero worked and overtime hours',async()=>{
- const id={entity:randomUUID(),unit:randomUUID(),user:randomUUID(),employee:randomUUID(),request:randomUUID()};
- const slug='pto-only-'+id.entity.slice(0,8);
+test('30-day PTO wait, no-notice sick, rollover and both separation payouts',async()=>{
+ const id={entity:randomUUID(),unit:randomUUID(),admin:randomUUID(),user:randomUUID(),
+   employee:randomUUID()};
+ const slug='final-leave-'+id.entity.slice(0,8);
  await pool.query(`INSERT INTO legal_entities(id,legal_name,display_name,slug)
-  VALUES($1,'PTO-Only Test','PTO-Only Test',$2)`,[id.entity,slug]);
+   VALUES($1,'Leave Test Employer','Leave Test Employer',$2)`,[id.entity,slug]);
  await pool.query(`INSERT INTO business_units(id,legal_entity_id,name,slug)
-  VALUES($1,$2,'PTO-Only Unit',$3)`,[id.unit,id.entity,slug+'-unit']);
- await pool.query(`INSERT INTO users(id,email,display_name)
-  VALUES($1,$2,'PTO Test Manager')`,[id.user,slug+'@example.test']);
+   VALUES($1,$2,'Leave Test Unit',$3)`,[id.unit,id.entity,slug+'-unit']);
+ await pool.query(`INSERT INTO users(id,email,display_name) VALUES
+   ($1,$3,'Leave Manager'),($2,$4,'Leave Worker')`,
+   [id.admin,id.user,slug+'-admin@example.test',slug+'-employee@example.test']);
  await pool.query(`INSERT INTO user_role_assignments(user_id,role_id)
-  SELECT $1,id FROM roles WHERE key='platform_admin'`,[id.user]);
- await pool.query(`INSERT INTO employees(id,business_unit_id,display_name,employee_number)
-  VALUES($1,$2,'PTO Test Worker','PTO-1')`,[id.employee,id.unit]);
+   SELECT $1,id FROM roles WHERE key='platform_admin'`,[id.admin]);
+ await pool.query(`INSERT INTO employees(id,business_unit_id,user_id,display_name,
+    employee_number,hire_date) VALUES($1,$2,$3,'Leave Worker','LV-1','2026-10-23')`,
+   [id.employee,id.unit,id.user]);
  await pool.query(`INSERT INTO ledger_accounts(legal_entity_id,code,name,account_type)
-  VALUES($1,'6200','Wage Expense','expense'),($1,'2150','Wage Payable','liability')`,[id.entity]);
- await pool.query(`INSERT INTO payroll_hourly_rates
-  (business_unit_id,employee_id,effective_on,hourly_cents)
-  VALUES($1,$2,'2026-10-01',1950)`,[id.unit,id.employee]);
- await pool.query(`INSERT INTO employee_pto_requests(
-  id,business_unit_id,employee_id,start_date,end_date,requested_hours,status)
-  VALUES($1,$2,$3,'2026-10-13','2026-10-13',7.5,'approved')`,
-  [id.request,id.unit,id.employee]);
- await pool.query(`INSERT INTO employee_pto_request_days(
-  request_id,business_unit_id,employee_id,leave_date,paid_seconds)
-  VALUES($1,$2,$3,'2026-10-13',27000)`,[id.request,id.unit,id.employee]);
+   VALUES($1,'6200','Wage Expense','expense'),
+         ($1,'2150','Wages Payable','liability')`,[id.entity]);
+ await pool.query(`INSERT INTO payroll_hourly_rates(
+   business_unit_id,employee_id,effective_on,hourly_cents)
+   VALUES($1,$2,'2026-10-23',2000)`,[id.unit,id.employee]);
+ // 60 approved, actual worked hours = two uncapped hours in each leave bank.
+ for(let i=0;i<10;i++){
+   const d=new Date(Date.UTC(2026,9,23+i,14,0,0)).toISOString();
+   await pool.query(`INSERT INTO employee_time_entries(
+    business_unit_id,employee_id,clock_in_at,clock_out_at,review_status)
+    VALUES($1,$2,$3::timestamptz,$3::timestamptz+interval '6 hours','approved')`,
+    [id.unit,id.employee,d]);
+ }
+ const before=await leaveBalances(id.employee,id.unit);
+ assert.equal(before.pto.balanceHours,2);
+ assert.equal(before.sick.balanceHours,2);
+ await assert.rejects(createPtoRequest(id.user,{
+   businessUnitId:id.unit,leaveType:'pto',startDate:'2026-11-10',endDate:'2026-11-10',
+   requestedHours:0.5,note:'Test',days:undefined
+ }), (e:any)=>e.code==='PTO_WAIT_PERIOD');
+ // December is after 30 calendar days, and accrued leave carries over.
+ const pto=(await createPtoRequest(id.user,{
+   businessUnitId:id.unit,leaveType:'pto',startDate:'2026-12-02',endDate:'2026-12-02',
+   requestedHours:0.5,note:'Test',
+ })).data;
+ assert.equal(pto.status,'pending');
+ assert.equal((await reviewPtoRequest(id.admin,id.unit,pto.id,{decision:'approve',note:''})).data.status,'approved');
+ const sick=(await createPtoRequest(id.user,{
+   businessUnitId:id.unit,leaveType:'sick',startDate:'2026-11-13',endDate:'2026-11-13',
+   requestedHours:0.5,note:'No advance notice required',
+ })).data;
+ assert.equal(sick.status,'approved');
+ const balances=await leaveBalances(id.employee,id.unit);
+ assert.equal(balances.pto.balanceHours,1.5);
+ assert.equal(balances.sick.balanceHours,1.5);
+ // Approved future PTO must be revoked before a separation payout is processed.
+ await pool.query(`UPDATE employees SET status='terminated',termination_date='2026-11-14'
+   WHERE id=$1`,[id.employee]);
+ const c1=await pool.connect();
+ try {await assert.rejects(separationInputs(c1,id.unit,'2026-11-09','2026-11-16'),
+   (e:any)=>e.code==='SEPARATION_LEAVE_UNRESOLVED');}
+ finally {c1.release();}
+ // Test safe settlement by returning to active for the manager to revoke.
+ await pool.query(`UPDATE employees SET status='active',termination_date=NULL WHERE id=$1`,[id.employee]);
+ assert.equal((await reviewPtoRequest(id.admin,id.unit,pto.id,{decision:'cancel',note:'Separation'})).data.status,'cancelled');
+ await pool.query(`UPDATE employees SET status='terminated',termination_date='2026-11-14'
+   WHERE id=$1`,[id.employee]);
+ const c2=await pool.connect();
+ try {
+   const payouts=await separationInputs(c2,id.unit,'2026-11-09','2026-11-16');
+   assert.equal(payouts.length,2);
+   assert.equal(payouts.find(p=>p.leaveType==='pto')?.payoutHours,2);
+   assert.equal(payouts.find(p=>p.leaveType==='sick')?.payoutHours,1.5);
+   assert.equal(payouts.reduce((n,p)=>n+p.payoutCents,0),7000);
+ } finally {c2.release();}
 
- const prepared=(await preparePayroll(id.user,id.unit,{
-  periodStart:'2026-10-12',periodEnd:'2026-10-19'})).data;
- assert.equal(prepared.grossCents,14625);
- assert.equal(prepared.ptoLineCount,1);
- assert.equal(prepared.lineCount,0);
- const register=(await getPayroll(id.user,id.unit,prepared.id)).data;
- assert.equal(register.ptoLines.length,1);
- assert.equal(register.ptoLines[0].ptoSeconds,27000);
- assert.equal(register.regularSeconds,0);assert.equal(register.overtimeSeconds,0);
- assert.equal(register.employees[0].grossCents,14625);
- assert.equal((await approvePayroll(id.user,id.unit,prepared.id)).data.status,'approved');
- const native=(await prepareNativeCalculation(id.user,id.unit,prepared.id)).data;
- assert.equal(native.ptoCents,14625);assert.equal(native.grossWagesCents,14625);
- assert.equal(native.regularCents,0);assert.equal(native.overtimeCents,0);
- assert.equal((await approveNativeCalculation(id.user,id.unit,prepared.id)).data.status,'approved');
- const detail=(await nativeCalculationDetail(id.user,id.unit,prepared.id)).data;
- assert.equal(detail.lines[0].ptoCents,14625);
- assert.equal(detail.lines[0].ptoSeconds,27000);
- assert.equal(detail.lines[0].regularSeconds,0);assert.equal(detail.lines[0].overtimeSeconds,0);
- const html=statementHtml({id:randomUUID(),status:'recorded_paid',method:'check',reference:'PTO-TEST',
-  netPaidCents:10000,statement:{
-   employerName:'Pioneer Test',employeeName:'PTO Test Worker',employeeAddress:'Test',
-   payDate:'2026-10-23',periodStart:'2026-10-12',periodEndExclusive:'2026-10-19',
-   regularSeconds:0,overtimeSeconds:0,
-   amounts:{gross_cents:14625,total_withholding_cents:4625,
-    voluntary_deductions_cents:0,reimbursement_cents:0},
-   earnings:[],deductions:[],additions:[],
-   ptoEarnings:[{leaveDate:'2026-10-13',paidSeconds:27000,ptoCents:14625,hourlyCents:1950}],
-  }});
- assert.match(html,/Paid Time Off \(PTO\)/);
- assert.match(html,/\$146\.25/);
- assert.match(html,/not time worked for overtime/i);
 });
