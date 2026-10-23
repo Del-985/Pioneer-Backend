@@ -253,7 +253,7 @@ function dbLine(x:NativeStored):NativeLine{
  return{
   employeeId:x.employee_id,employeeName:x.employee_name,
   regularSeconds:numeric(x.regular_seconds),overtimeSeconds:numeric(x.overtime_seconds),
-  regularCents:numeric(x.regular_cents),overtimeCents:numeric(x.overtime_cents),
+  regularCents:numeric(x.regular_cents),overtimeCents:numeric(x.overtime_cents),ptoCents:numeric(x.pto_cents),
    ptoCents:numeric(x.pto_cents),ptoSeconds:numeric(x.pto_seconds),
   adjustmentCents:numeric(x.adjustment_cents),grossCents,
   voluntaryDeductionCents,reimbursementCents:numeric(x.reimbursement_cents),
@@ -357,12 +357,12 @@ export async function prepareNativeCalculation(user:string,unit:string,runId:str
   const q=await c.query<{id:string}>(`
     INSERT INTO payroll_native_calculations(
      legal_entity_id,business_unit_id,payroll_run_id,source_digest,
-     regular_cents,overtime_cents,wage_adjustments_cents,gross_wages_cents,
+     regular_cents,overtime_cents,pto_cents,wage_adjustments_cents,gross_wages_cents,
      reimbursement_cents,voluntary_deductions_cents,employee_count,
-     created_by_user_id,notes)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+     created_by_user_id,notes,calculation_version)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'native-earnings-v2-pto') RETURNING id`,
    [run.legal_entity_id,unit,runId,source.sourceDigest,
-    source.totals.regularCents,source.totals.overtimeCents,
+    source.totals.regularCents,source.totals.overtimeCents,source.totals.ptoCents,
     source.totals.wageAdjustmentsCents,source.totals.grossWagesCents,
     source.totals.reimbursementCents,source.totals.voluntaryDeductionsCents,
     source.totals.employeeCount,user,input.notes??null]);
@@ -370,11 +370,12 @@ export async function prepareNativeCalculation(user:string,unit:string,runId:str
   for(const line of source.lines)await c.query(`
     INSERT INTO payroll_native_employee_lines(calculation_id,business_unit_id,
       employee_id,regular_seconds,overtime_seconds,regular_cents,overtime_cents,
-      adjustment_cents,gross_cents,voluntary_deduction_cents,
+      pto_cents,pto_seconds,adjustment_cents,gross_cents,voluntary_deduction_cents,
       reimbursement_cents,deduction_details,adjustment_details)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb)`,
    [id,unit,line.employeeId,line.regularSeconds,line.overtimeSeconds,
-    line.regularCents,line.overtimeCents,line.adjustmentCents,line.grossCents,
+    line.regularCents,line.overtimeCents,line.ptoCents,line.ptoSeconds,
+    line.adjustmentCents,line.grossCents,
     line.voluntaryDeductionCents,line.reimbursementCents,
     JSON.stringify(line.deductionDetails),JSON.stringify(line.adjustmentDetails)]);
   await audit(c,user,unit,id,'prepared',{runId,sourceDigest:source.sourceDigest,
@@ -451,11 +452,11 @@ export async function employeeNativePreview(user:string,unit:string){
  const employeeId=await employeeSelf(user,unit);
  const q=await pool.query<{
   id:string;period_start:string;period_end:string;approved_at:Date;
-  regular_cents:string;overtime_cents:string;adjustment_cents:string;
+  regular_cents:string;overtime_cents:string;pto_cents:string;adjustment_cents:string;
   gross_cents:string;voluntary_deduction_cents:string;
   reimbursement_cents:string;
  }>(`SELECT n.id,r.period_start::text,r.period_end::text,n.approved_at,
-    l.regular_cents::text,l.overtime_cents::text,l.adjustment_cents::text,
+    l.regular_cents::text,l.overtime_cents::text,l.pto_cents::text,l.adjustment_cents::text,
     l.gross_cents::text,l.voluntary_deduction_cents::text,l.reimbursement_cents::text
     FROM payroll_native_employee_lines l
     JOIN payroll_native_calculations n ON n.id=l.calculation_id
