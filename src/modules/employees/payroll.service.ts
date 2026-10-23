@@ -6,6 +6,7 @@ import {assertBusinessUnitPermission} from '../access/authorization.service.js';
 import {employeeSelf} from './employee-scheduling.service.js';
 import {calculateGrossLines,localWeekKey,type PayInput} from './payroll-math.js';
 import {payrollPtoInputs} from './payroll-pto.service.js';
+import {separationInputs} from './payroll-separation.service.js';
 
 const uuid=z.string().uuid();
 const day=z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -144,7 +145,9 @@ export async function setPayrollRate(userId:string,unit:string,input:z.infer<typ
       [input.employeeId,input.effectiveOn]);
     const usedPto=await c.query(`SELECT 1 FROM payroll_run_pto_lines p JOIN payroll_runs r ON r.id=p.payroll_run_id
        WHERE p.employee_id=$1 AND p.leave_date >=$2::date AND r.status<>'void' LIMIT 1`,[input.employeeId,input.effectiveOn]);
-    if(active.rows.length||usedPto.rows.length)throw new HttpError(409,'RATE_IN_PAYROLL_RUN',
+    const payout=await c.query(`SELECT 1 FROM payroll_run_leave_payout_lines p JOIN payroll_runs r ON r.id=p.payroll_run_id
+       WHERE p.employee_id=$1 AND p.separation_date>=$2::date AND r.status<>'void' LIMIT 1`,[input.employeeId,input.effectiveOn]);
+    if(active.rows.length||usedPto.rows.length||payout.rows.length)throw new HttpError(409,'RATE_IN_PAYROLL_RUN',
       'Void affected draft payroll registers before changing a rate effective in their periods.');
     const r=await c.query<{id:string}>(`
       INSERT INTO payroll_hourly_rates(business_unit_id,employee_id,effective_on,
@@ -255,9 +258,11 @@ export async function preparePayroll(userId:string,unit:string,input:z.infer<typ
     const accounts=await accountPair(c,ctx.legal_entity_id);
     const lines=await payrollInputs(c,unit,ctx.legal_entity_id,input.periodStart,input.periodEnd,true);
     const pto=await payrollPtoInputs(c,unit,input.periodStart,input.periodEnd);
-    if(!lines.length&&!pto.length)throw new HttpError(409,'PAYROLL_NO_HOURS',
+    const payouts=await separationInputs(c,unit,input.periodStart,input.periodEnd);
+    if(!lines.length&&!pto.length&&!payouts.length)throw new HttpError(409,'PAYROLL_NO_HOURS',
       'This period contains no approved worked time or payable PTO.');
-    const gross=lines.reduce((a,x)=>a+x.grossCents,0)+pto.reduce((a,x)=>a+x.ptoCents,0);
+    const gross=lines.reduce((a,x)=>a+x.grossCents,0)+pto.reduce((a,x)=>a+x.ptoCents,0)
+       +payouts.reduce((a,x)=>a+x.payoutCents,0);
     if(!Number.isSafeInteger(gross)||gross<=0)throw new HttpError(409,'PAYROLL_INVALID_TOTAL',
       'Approved hours must produce a positive wage total.');
     const reg=lines.reduce((a,x)=>a+x.regularSeconds,0),
@@ -280,19 +285,39 @@ export async function preparePayroll(userId:string,unit:string,input:z.infer<typ
     }
     for(const leave of pto){
       await c.query(`INSERT INTO payroll_run_pto_lines(payroll_run_id,business_unit_id,employee_id,
-       request_day_id,rate_id,leave_date,paid_seconds,hourly_cents,pto_cents)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[id,unit,leave.employeeId,leave.requestDayId,
-       leave.rateId,leave.leaveDate,leave.paidSeconds,leave.hourlyCents,leave.ptoCents]);
+       request_day_id,rate_id,leave_date,paid_seconds,hourly_cents,pto_cents,leave_type)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[id,unit,leave.employeeId,leave.requestDayId,
+       leave.rateId,leave.leaveDate,leave.paidSeconds,leave.hourlyCents,leave.ptoCents,leave.leaveType]);
+    }
+    for(const line of payouts){
+      await c.query(`INSERT INTO payroll_run_leave_payout_lines(
+        payroll_run_id,business_unit_id,employee_id,leave_type,separation_date,
+        payout_hours,hourly_cents,payout_cents,rate_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [id,unit,line.employeeId,line.leaveType,line.separationDate,line.payoutHours,
+         line.hourlyCents,line.payoutCents,line.rateId]);
     }
     await log(c,userId,unit,id,'prepared',{grossCents:gross,ptoCents:pto.reduce((n,p)=>n+p.ptoCents,0),count:lines.length,
       periodStart:input.periodStart,periodEnd:input.periodEnd});
-    return{data:{id,grossCents:gross,lineCount:lines.length,ptoLineCount:pto.length,status:'draft'}};
+    return{data:{id,grossCents:gross,lineCount:lines.length,ptoLineCount:pto.length,payoutLineCount:payouts.length,status:'draft'}};
   });
 }
 async function verifySnapshot(c:PoolClient,run:RunRow){
   const current=await payrollInputs(c,run.business_unit_id,run.legal_entity_id,
     run.period_start,run.period_end,true);
   const currentPto=await payrollPtoInputs(c,run.business_unit_id,run.period_start,run.period_end);
+  const currentPayouts=await separationInputs(c,run.business_unit_id,run.period_start,run.period_end,run.id);
+  const savedPayouts=await c.query<{employee_id:string;leave_type:string;separation_date:string;
+     payout_hours:string;payout_cents:string;rate_id:string;hourly_cents:string}>(`
+     SELECT employee_id,leave_type,separation_date::text,payout_hours::text,payout_cents::text,
+       rate_id,hourly_cents::text FROM payroll_run_leave_payout_lines WHERE payroll_run_id=$1`,[run.id]);
+  if(savedPayouts.rows.length!==currentPayouts.length ||
+      currentPayouts.some(p=>!savedPayouts.rows.some(old=>old.employee_id===p.employeeId&&
+      old.leave_type===p.leaveType&&old.separation_date===p.separationDate&&
+      old.rate_id===p.rateId&&asNum(old.hourly_cents)===p.hourlyCents&&
+      asNum(old.payout_cents)===p.payoutCents&&asNum(old.payout_hours)===p.payoutHours)))
+    throw new HttpError(409,'SEPARATION_PAYOUT_STALE',
+       'Separation pay inputs changed. Void the draft and rebuild payroll.');
   const savedPto=await c.query<{request_day_id:string;paid_seconds:number;hourly_cents:string;pto_cents:string;rate_id:string}>(
     `SELECT request_day_id,paid_seconds,hourly_cents::text,pto_cents::text,rate_id
       FROM payroll_run_pto_lines WHERE payroll_run_id=$1`,[run.id]);
@@ -344,6 +369,7 @@ export async function voidPayroll(userId:string,unit:string,id:string){
     const run=await getRunLocked(c,unit,id);
     if(run.status==='posted'||run.status==='void')
       throw new HttpError(409,'PAYROLL_LOCKED','Posted or void payroll registers cannot be discarded.');
+    await c.query('DELETE FROM payroll_run_leave_payout_lines WHERE payroll_run_id=$1',[id]);
     await c.query('DELETE FROM payroll_run_pto_lines WHERE payroll_run_id=$1',[id]);
     await c.query('DELETE FROM payroll_run_lines WHERE payroll_run_id=$1',[id]);
     await c.query(`UPDATE payroll_runs SET status='void' WHERE id=$1`,[id]);
@@ -406,12 +432,12 @@ export async function getPayroll(userId:string,unit:string,id:string){
   try{
     const run=await getRunLocked(c,unit,id);
     const lines=await getLines(c,id);
-    const leave=(await c.query<{id:string;employee_id:string;request_day_id:string;leave_date:string;paid_seconds:number;pto_cents:string;hourly_cents:string}>(`
+    const leave=(await c.query<{id:string;employee_id:string;request_day_id:string;leave_date:string;paid_seconds:number;pto_cents:string;hourly_cents:string;leave_type:string}>(`
       SELECT id,employee_id,request_day_id,leave_date::text,paid_seconds,
-       pto_cents::text,hourly_cents::text FROM payroll_run_pto_lines
+       pto_cents::text,hourly_cents::text,leave_type FROM payroll_run_pto_lines
       WHERE payroll_run_id=$1 ORDER BY leave_date,id`,[id])).rows.map(x=>({
       id:x.id,employeeId:x.employee_id,requestDayId:x.request_day_id,
-      leaveDate:x.leave_date,ptoSeconds:x.paid_seconds,
+      leaveDate:x.leave_date,leaveType:x.leave_type,ptoSeconds:x.paid_seconds,
       ptoCents:asNum(x.pto_cents),hourlyCents:asNum(x.hourly_cents)}));
     const employees=summaries(lines);
     for(const p of leave){
@@ -424,7 +450,25 @@ export async function getPayroll(userId:string,unit:string,id:string){
       }
       e.grossCents+=p.ptoCents;
     }
-    return{data:{...mapRun(run),lines,ptoLines:leave,employees}};
+    const payouts=(await c.query<{id:string;employee_id:string;leave_type:string;
+      separation_date:string;payout_hours:string;hourly_cents:string;payout_cents:string}>(`
+      SELECT id,employee_id,leave_type,separation_date::text,payout_hours::text,
+        hourly_cents::text,payout_cents::text
+      FROM payroll_run_leave_payout_lines WHERE payroll_run_id=$1 ORDER BY employee_id,leave_type`,
+      [id])).rows.map(x=>({id:x.id,employeeId:x.employee_id,leaveType:x.leave_type,
+      separationDate:x.separation_date,payoutHours:asNum(x.payout_hours),
+      hourlyCents:asNum(x.hourly_cents),payoutCents:asNum(x.payout_cents)}));
+    for(const p of payouts){
+      let e=employees.find(x=>x.employeeId===p.employeeId);
+      if(!e){
+        const name=await c.query<{display_name:string}>('SELECT display_name FROM employees WHERE id=$1',[p.employeeId]);
+        e={employeeId:p.employeeId,employeeName:name.rows[0]?.display_name??'',
+          grossCents:0,regularCents:0,overtimeCents:0,regularSeconds:0,overtimeSeconds:0};
+        employees.push(e);
+      }
+      e.grossCents+=p.payoutCents;
+    }
+    return{data:{...mapRun(run),lines,ptoLines:leave,separationPayouts:payouts,employees}};
   }finally{c.release();}
 }
 export async function myGrossStatements(userId:string,unit:string){
@@ -442,7 +486,10 @@ export async function myGrossStatements(userId:string,unit:string){
            0::bigint AS pto_cents,0::bigint AS pto_seconds FROM payroll_run_lines
        UNION ALL
        SELECT payroll_run_id,employee_id,0::bigint,0::bigint,0::bigint,0::bigint,
-         pto_cents,paid_seconds::bigint FROM payroll_run_pto_lines) t
+         pto_cents,paid_seconds::bigint FROM payroll_run_pto_lines
+       UNION ALL
+       SELECT payroll_run_id,employee_id,0::bigint,0::bigint,0::bigint,0::bigint,
+         payout_cents,0::bigint FROM payroll_run_leave_payout_lines) t
     JOIN payroll_runs run ON run.id=t.payroll_run_id
     WHERE run.business_unit_id=$1 AND t.employee_id=$2 AND run.status='posted'
     GROUP BY run.id ORDER BY run.period_start DESC LIMIT 50`,[unit,employeeId]);

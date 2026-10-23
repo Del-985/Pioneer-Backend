@@ -3,11 +3,11 @@ import {HttpError} from '../../lib/http-error.js';
 
 type SourceRow={
  id:string;request_id:string;employee_id:string;business_unit_id:string;
- leave_date:string;paid_seconds:number;rate_id:string|null;hourly_cents:string|null;
+ leave_date:string;paid_seconds:number;leave_type:'pto'|'sick';rate_id:string|null;hourly_cents:string|null;
 };
 export type PayrollPtoLine={
  requestDayId:string;requestId:string;employeeId:string;businessUnitId:string;
- leaveDate:string;paidSeconds:number;rateId:string;hourlyCents:number;ptoCents:number;
+ leaveDate:string;paidSeconds:number;leaveType:'pto'|'sick';rateId:string;hourlyCents:number;ptoCents:number;
 };
 export function paidLeaveCents(seconds:number,hourlyCents:number){
  if(!Number.isSafeInteger(seconds)||seconds<=0||seconds%900!==0||
@@ -21,7 +21,7 @@ export function paidLeaveCents(seconds:number,hourlyCents:number){
 export async function payrollPtoInputs(c:PoolClient,unit:string,start:string,end:string){
  const r=await c.query<SourceRow>(`
    SELECT d.id,d.request_id,d.employee_id,d.business_unit_id,
-     d.leave_date::text,d.paid_seconds,rate.id AS rate_id,rate.hourly_cents::text
+     d.leave_date::text,d.paid_seconds,request.leave_type,rate.id AS rate_id,rate.hourly_cents::text
    FROM employee_pto_request_days d
    JOIN employee_pto_requests request ON request.id=d.request_id
      AND request.business_unit_id=d.business_unit_id
@@ -40,6 +40,6 @@ export async function payrollPtoInputs(c:PoolClient,unit:string,start:string,end
    const hourlyCents=Number(row.hourly_cents);
    return {requestDayId:row.id,requestId:row.request_id,employeeId:row.employee_id,
      businessUnitId:row.business_unit_id,leaveDate:row.leave_date,paidSeconds:row.paid_seconds,
-     rateId:row.rate_id,hourlyCents,ptoCents:paidLeaveCents(row.paid_seconds,hourlyCents)};
+     rateId:row.rate_id,leaveType:row.leave_type,hourlyCents,ptoCents:paidLeaveCents(row.paid_seconds,hourlyCents)};
  }) as PayrollPtoLine[];
 }

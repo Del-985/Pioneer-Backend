@@ -11,6 +11,7 @@ const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>{
 },{message:'Enter a real calendar date.'});
 export const ptoCreateSchema=z.object({
   businessUnitId:uuid,startDate:date,endDate:date,
+  leaveType:z.enum(['pto','sick']).default('pto'),
   requestedHours:z.number().positive().max(160).refine(v=>Number.isInteger(v*4),{message:'Request time in 15-minute increments.'}),
   note:z.string().trim().max(1000).default(''),
   days:z.array(z.object({date,hours:z.number().positive().max(24)
@@ -56,17 +57,17 @@ export function validatePtoRange(start:string,end:string,hours:number,noticeDays
 }
 
 type PtoRow={id:string;business_unit_id:string;employee_id:string;employee_name?:string;
- start_date:string;end_date:string;requested_hours:string;employee_note:string|null;
+ start_date:string;end_date:string;requested_hours:string;employee_note:string|null;leave_type:'pto'|'sick';
  status:string;created_at:Date;reviewed_at:Date|null;reviewed_by_user_id:string|null;manager_note:string|null};
 function mapRequest(r:PtoRow){return{
  id:r.id,businessUnitId:r.business_unit_id,employeeId:r.employee_id,
- employeeName:r.employee_name??null,startDate:r.start_date,endDate:r.end_date,
+ employeeName:r.employee_name??null,startDate:r.start_date,endDate:r.end_date,leaveType:r.leave_type,
  requestedHours:Number(r.requested_hours),note:r.employee_note??'',
  status:r.status,createdAt:r.created_at,reviewedAt:r.reviewed_at,
  managerNote:r.manager_note??'',reviewedByUserId:r.reviewed_by_user_id,
 };}
 const select=`SELECT r.id,r.business_unit_id,r.employee_id,e.display_name AS employee_name,
-  r.start_date::text,r.end_date::text,r.requested_hours::text,r.employee_note,
+  r.start_date::text,r.end_date::text,r.requested_hours::text,r.employee_note,r.leave_type,
   r.status,r.created_at,r.reviewed_at,r.reviewed_by_user_id,r.manager_note
  FROM employee_pto_requests r JOIN employees e ON e.id=r.employee_id`;
 async function transaction<T>(work:(c:PoolClient)=>Promise<T>):Promise<T>{
@@ -79,16 +80,16 @@ async function lockEmployee(c:PoolClient,employeeId:string,unit:string){
   if(!row.rows[0])throw new HttpError(404,'EMPLOYEE_NOT_FOUND','Employee not found in this business.');
 }
 type Funds={banked:string;pending:string};
-async function funds(c:PoolClient,employeeId:string,unit:string){
+async function funds(c:PoolClient,employeeId:string,unit:string,leaveType:'pto'|'sick'){
   const result=await c.query<Funds>(`
    SELECT
      (SELECT coalesce(sum(hours_delta),0) FROM employee_leave_ledger
-       WHERE employee_id=$1 AND business_unit_id=$2 AND leave_type='pto')
+       WHERE employee_id=$1 AND business_unit_id=$2 AND leave_type=$3)
      + (SELECT coalesce(sum(hours_delta),0) FROM employee_pto_usage
-       WHERE employee_id=$1 AND business_unit_id=$2) AS banked,
+       WHERE employee_id=$1 AND business_unit_id=$2 AND leave_type=$3) AS banked,
      (SELECT coalesce(sum(requested_hours),0) FROM employee_pto_requests
-       WHERE employee_id=$1 AND business_unit_id=$2 AND status='pending') AS pending`,
-    [employeeId,unit]);
+       WHERE employee_id=$1 AND business_unit_id=$2 AND status='pending' AND leave_type=$3) AS pending`,
+    [employeeId,unit,leaveType]);
   return{banked:Number(result.rows[0]!.banked),pending:Number(result.rows[0]!.pending)};
 }
 async function event(c:PoolClient,row:PtoRow,actor:string,action:string,note:string){
@@ -110,26 +111,46 @@ export async function employeePtoRequests(userId:string,unit:string){
 export async function createPtoRequest(userId:string,input:z.infer<typeof ptoCreateSchema>){
  const employeeId=await employeeSelf(userId,input.businessUnitId);
  return transaction(async c=>{
+   await c.query('SELECT id FROM business_units WHERE id=$1 FOR UPDATE',[input.businessUnitId]);
    await lockEmployee(c,employeeId,input.businessUnitId);
-   const policy=await c.query<{planned_notice_days:number}>(`SELECT planned_notice_days
-    FROM employee_leave_policy WHERE singleton=1`);
-   const notice=policy.rows[0]?.planned_notice_days??7;
-   validatePtoRange(input.startDate,input.endDate,input.requestedHours,notice,detroitDate());
+   const person=(await c.query<{hire_date:string|null;status:string}>(
+     'SELECT hire_date::text,status FROM employees WHERE id=$1 AND business_unit_id=$2',
+     [employeeId,input.businessUnitId])).rows[0]!;
+   if(person.status!=='active')throw new HttpError(409,'LEAVE_INACTIVE_EMPLOYMENT','Only active employees may use leave.');
+   const policy=await c.query<{planned_notice_days:number;pto_wait_days:number}>(
+     'SELECT planned_notice_days,pto_wait_days FROM employee_leave_policy WHERE singleton=1');
+   const notice=input.leaveType==='pto'?(policy.rows[0]?.planned_notice_days??7):0;
+   validatePtoRange(input.startDate,input.endDate,input.requestedHours,notice,
+     input.leaveType==='sick'?input.startDate:detroitDate());
+   if(input.leaveType==='pto'){
+     if(!person.hire_date)throw new HttpError(409,'PTO_HIRE_DATE_MISSING',
+       'Management must enter the employee hire date before PTO can be used.');
+     if(input.startDate<addCalendarDays(person.hire_date,policy.rows[0]?.pto_wait_days??30))
+       throw new HttpError(409,'PTO_WAIT_PERIOD','PTO use begins 30 calendar days after the hire date.');
+   } else if(input.startDate<addCalendarDays(detroitDate(),-30))
+     throw new HttpError(409,'SICK_RETROACTIVE_REVIEW','Sick leave over 30 days old needs payroll correction review.');
    const days=ptoDayAllocations(input.startDate,input.endDate,input.requestedHours,input.days);
    const overlap=await c.query(`SELECT id FROM employee_pto_requests
      WHERE business_unit_id=$1 AND employee_id=$2 AND status IN ('pending','approved')
      AND daterange(start_date,end_date,'[]') && daterange($3::date,$4::date,'[]')
      LIMIT 1`,[input.businessUnitId,employeeId,input.startDate,input.endDate]);
    if(overlap.rows[0])throw new HttpError(409,'PTO_REQUEST_OVERLAP','Another pending or approved PTO request covers these dates.');
-   const balance=await funds(c,employeeId,input.businessUnitId);
+   const payrolled=await c.query(`SELECT id FROM payroll_runs
+      WHERE business_unit_id=$1 AND status<>'void'
+      AND daterange(period_start,period_end,'[)') && daterange($2::date,$3::date,'[]') LIMIT 1`,
+     [input.businessUnitId,input.startDate,input.endDate]);
+   if(payrolled.rows.length)throw new HttpError(409,'LEAVE_PAYROLL_LOCKED',
+     'These dates have an existing payroll register; use payroll correction procedures.');
+   const balance=await funds(c,employeeId,input.businessUnitId,input.leaveType);
    if(balance.banked-balance.pending+0.0000001<input.requestedHours)
-     throw new HttpError(409,'PTO_INSUFFICIENT_BALANCE','Not enough accrued PTO remains after existing pending requests.');
+     throw new HttpError(409,'LEAVE_INSUFFICIENT_BALANCE','Not enough accrued leave remains.');
    const inserted=await c.query<PtoRow>(`INSERT INTO employee_pto_requests
-     (business_unit_id,employee_id,start_date,end_date,requested_hours,employee_note)
-     VALUES($1,$2,$3,$4,$5,$6) RETURNING
+     (business_unit_id,employee_id,start_date,end_date,requested_hours,employee_note,leave_type,status)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING
      id,business_unit_id,employee_id,start_date::text,end_date::text,
-     requested_hours::text,employee_note,status,created_at,reviewed_at,reviewed_by_user_id,manager_note`,
-     [input.businessUnitId,employeeId,input.startDate,input.endDate,input.requestedHours,input.note]);
+     requested_hours::text,employee_note,leave_type,status,created_at,reviewed_at,reviewed_by_user_id,manager_note`,
+     [input.businessUnitId,employeeId,input.startDate,input.endDate,input.requestedHours,input.note,
+      input.leaveType,input.leaveType==='sick'?'approved':'pending']);
    for(const day of days){
      await c.query(`INSERT INTO employee_pto_request_days
        (request_id,business_unit_id,employee_id,leave_date,paid_seconds)
@@ -137,6 +158,13 @@ export async function createPtoRequest(userId:string,input:z.infer<typeof ptoCre
        [inserted.rows[0]!.id,input.businessUnitId,employeeId,day.date,day.hours*3600]);
    }
    await event(c,inserted.rows[0]!,userId,'submitted',input.note);
+   if(input.leaveType==='sick'){
+     await c.query(`INSERT INTO employee_pto_usage
+       (request_id,business_unit_id,employee_id,leave_type,action,hours_delta,created_by_user_id)
+       VALUES($1,$2,$3,'sick','approved',$4,$5)`,
+       [inserted.rows[0]!.id,input.businessUnitId,employeeId,-input.requestedHours,userId]);
+     await event(c,inserted.rows[0]!,userId,'approved','No advance approval required for sick leave');
+   }
    return{data:mapRequest(inserted.rows[0]!)};
  });
 }
@@ -170,6 +198,7 @@ export async function reviewPtoRequest(userId:string,unit:string,id:string,input
    if(!found.rows[0])throw new HttpError(404,'PTO_REQUEST_NOT_FOUND','PTO request not found.');
    await lockEmployee(c,found.rows[0].employee_id,unit);
    const row=await getRequest(c,unit,id);
+   if(row.leave_type==='sick'&&input.decision!=='cancel')throw new HttpError(409,'SICK_ALREADY_RECORDED','Sick leave is automatically recorded.');
    if(input.decision==='approve'||input.decision==='cancel'){
      const alreadyPayrolled=await c.query(`
        SELECT run.id FROM payroll_runs run
@@ -182,18 +211,18 @@ export async function reviewPtoRequest(userId:string,unit:string,id:string,input
    }
    if(input.decision==='cancel'){
      if(row.status!=='approved')throw new HttpError(409,'PTO_NOT_APPROVED','Only approved PTO can be revoked by management.');
-     if(row.start_date<=detroitDate())throw new HttpError(409,'PTO_ALREADY_STARTED',
+     if(row.leave_type==='pto'&&row.start_date<=detroitDate())throw new HttpError(409,'PTO_ALREADY_STARTED',
        'Past or current PTO needs a separate audited payroll correction.');
-     await c.query(`INSERT INTO employee_pto_usage(request_id,business_unit_id,employee_id,action,hours_delta,created_by_user_id)
-       VALUES($1,$2,$3,'restored',$4,$5)`,[id,unit,row.employee_id,Number(row.requested_hours),userId]);
+     await c.query(`INSERT INTO employee_pto_usage(request_id,business_unit_id,employee_id,leave_type,action,hours_delta,created_by_user_id)
+       VALUES($1,$2,$3,$4,'restored',$5,$6)`,[id,unit,row.employee_id,row.leave_type,Number(row.requested_hours),userId]);
    } else {
      if(row.status!=='pending')throw new HttpError(409,'PTO_ALREADY_REVIEWED','This request has already been reviewed.');
      if(input.decision==='approve'){
-       const balance=await funds(c,row.employee_id,unit);
+       const balance=await funds(c,row.employee_id,unit,row.leave_type);
        if(balance.banked+0.0000001<balance.pending)
          throw new HttpError(409,'PTO_INSUFFICIENT_BALANCE','Approved PTO would exceed accrued balance and other reservations.');
-       await c.query(`INSERT INTO employee_pto_usage(request_id,business_unit_id,employee_id,action,hours_delta,created_by_user_id)
-         VALUES($1,$2,$3,'approved',$4,$5)`,[id,unit,row.employee_id,-Number(row.requested_hours),userId]);
+       await c.query(`INSERT INTO employee_pto_usage(request_id,business_unit_id,employee_id,leave_type,action,hours_delta,created_by_user_id)
+         VALUES($1,$2,$3,$4,'approved',$5,$6)`,[id,unit,row.employee_id,row.leave_type,-Number(row.requested_hours),userId]);
      }
    }
    const status=input.decision==='approve'?'approved':input.decision==='deny'?'denied':'cancelled';

@@ -148,6 +148,9 @@ async function sourceLines(c:PoolClient,runId:string){
       UNION ALL
       SELECT employee_id,0::bigint,0::bigint,0::bigint,0::bigint,pto_cents
         FROM payroll_run_pto_lines WHERE payroll_run_id=$1
+      UNION ALL
+      SELECT employee_id,0::bigint,0::bigint,0::bigint,0::bigint,payout_cents
+        FROM payroll_run_leave_payout_lines WHERE payroll_run_id=$1
     ) l JOIN employees e ON e.id=l.employee_id
     GROUP BY l.employee_id,e.display_name ORDER BY e.display_name,l.employee_id`,
     [runId]);

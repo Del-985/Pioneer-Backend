@@ -143,6 +143,10 @@ async function snapshot(c:PoolClient,run:Run){
      SELECT employee_id,business_unit_id,0::bigint,0::bigint,0::bigint,0::bigint,
        pto_cents,paid_seconds::bigint
      FROM payroll_run_pto_lines WHERE payroll_run_id=$1 AND business_unit_id=$2
+     UNION ALL
+     SELECT employee_id,business_unit_id,0::bigint,0::bigint,0::bigint,0::bigint,
+       payout_cents,0::bigint FROM payroll_run_leave_payout_lines
+     WHERE payroll_run_id=$1 AND business_unit_id=$2
    ) l JOIN employees e ON e.id=l.employee_id AND e.business_unit_id=l.business_unit_id
    GROUP BY l.employee_id,e.display_name
    ORDER BY l.employee_id`,[run.id,run.business_unit_id]);

@@ -386,6 +386,10 @@ async function calcSource(c:PoolClient,unit:string,run:string,
   throw new HttpError(409,'TAX_EMPLOYEE_COUNT',
    'Tax preview requires 1–500 employees in an approved native snapshot.');
  const ids=q.rows.map(x=>x.employee_id);
+ const payoutRows=await c.query<{employee_id:string;amount:string}>(`
+   SELECT employee_id,sum(payout_cents)::text AS amount
+   FROM payroll_run_leave_payout_lines
+   WHERE payroll_run_id=$1 AND business_unit_id=$2 GROUP BY employee_id`,[run,unit]);
  const elections=await c.query<TaxElectionDB>(electionFields+`
    FROM payroll_tax_elections e WHERE e.business_unit_id=$1
     AND e.legal_entity_id=$2 AND e.employee_id=ANY($3::uuid[])
@@ -438,7 +442,8 @@ async function calcSource(c:PoolClient,unit:string,run:string,
     'Posted wage corrections require independent payroll tax classification before using this preview.');
   const ohioSupplementalWagesCents=adjustments
     .filter(a=>a.category==='bonus'||a.category==='retro_pay')
-    .reduce((n,a)=>n+a.amountCents,0);
+    .reduce((n,a)=>n+a.amountCents,0)
+    +Number(payoutRows.rows.find(p=>p.employee_id===x.employee_id)?.amount??0);
   if(!Number.isSafeInteger(ohioSupplementalWagesCents)||
     ohioSupplementalWagesCents<0||
     ohioSupplementalWagesCents>fNumber(x.gross_cents))

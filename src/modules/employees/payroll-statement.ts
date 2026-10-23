@@ -20,10 +20,14 @@ export function statementHtml(payment:{id:string;status:string;statement:any;net
  <h2>Hourly Earnings</h2><p>Total hours: ${esc(hours(s.regularSeconds+s.overtimeSeconds))}; hours above forty in a workweek: ${esc(hours(s.overtimeSeconds))}.</p>
  <table><thead><tr><th>Week starting</th><th>Base hourly rate</th><th>Regular hours</th><th>Overtime hours</th><th>Overtime rate</th><th>Wages</th></tr></thead><tbody>
  ${s.earnings.map((e:any)=>`<tr><td>${esc(e.weekStarting)}</td><td>${esc(money(e.hourlyCents))}</td><td>${esc(hours(e.regularSeconds))}</td><td>${esc(hours(e.overtimeSeconds))}</td><td>${esc(money(e.hourlyCents*e.overtimeMultiplierBps/10000))}</td><td>${esc(money(e.regularCents+e.overtimeCents))}</td></tr>`).join('')}</tbody></table>
- ${(s.ptoEarnings??[]).length?`<h2>Paid Time Off (PTO)</h2>
- <p class="note">PTO is paid at the base hourly rate and included in gross taxable wages, but is not time worked for overtime or additional leave accrual.</p>
- <table><thead><tr><th>Leave date</th><th>Paid hours</th><th>Base hourly rate</th><th>PTO wages</th></tr></thead><tbody>
- ${s.ptoEarnings.map((p:any)=>`<tr><td>${esc(p.leaveDate)}</td><td>${esc(hours(p.paidSeconds))}</td><td>${esc(money(p.hourlyCents))}</td><td>${esc(money(p.ptoCents))}</td></tr>`).join('')}
+ ${(s.ptoEarnings??[]).length?`<h2>Paid Leave — PTO and Sick</h2>
+ <p class="note">PTO and sick leave are paid at the base hourly rate and included in gross taxable wages, but are not time worked for overtime or additional leave accrual.</p>
+ <table><thead><tr><th>Leave type</th><th>Leave date</th><th>Paid hours</th><th>Base hourly rate</th><th>Paid wages</th></tr></thead><tbody>
+ ${s.ptoEarnings.map((p:any)=>`<tr><td>${esc(p.leaveType==='sick'?'Sick':'PTO')}</td><td>${esc(p.leaveDate)}</td><td>${esc(hours(p.paidSeconds))}</td><td>${esc(money(p.hourlyCents))}</td><td>${esc(money(p.ptoCents))}</td></tr>`).join('')}
+ </tbody></table>`:''}
+ ${(s.separationPayouts??[]).length?`<h2>Separation Leave Payout</h2>
+ <table><thead><tr><th>Leave type</th><th>Unused accrued hours</th><th>Base hourly rate</th><th>Payout</th></tr></thead><tbody>
+ ${s.separationPayouts.map((p:any)=>`<tr><td>${esc(p.leaveType==='sick'?'Sick Leave':'PTO')}</td><td>${esc(p.payoutHours)}</td><td>${esc(money(p.hourlyCents))}</td><td>${esc(money(p.payoutCents))}</td></tr>`).join('')}
  </tbody></table>`:''}
  <h2>Additions and Deductions</h2><table><thead><tr><th>Purpose</th><th>Amount</th></tr></thead><tbody>
  ${rows(Object.entries(taxNames).map(([key,name])=>[name,a[key]]))}
