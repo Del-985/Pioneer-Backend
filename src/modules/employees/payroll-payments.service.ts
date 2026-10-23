@@ -70,7 +70,7 @@ export async function recordPayment(user:string,unit:string,run:string,raw:z.inp
   const q=await c.query(`SELECT t.*,t.pay_date::text AS payday,r.period_start::text,r.period_end::text,
    l.*,t.id AS tax_id,t.native_calculation_id,
    e.display_name,coalesce(e.user_id::text,e.id::text) AS person_key,
-   n.regular_seconds,n.overtime_seconds,n.regular_cents,n.overtime_cents,n.adjustment_details,n.deduction_details,
+   n.regular_seconds,n.overtime_seconds,n.regular_cents,n.overtime_cents,n.pto_cents,n.pto_seconds,n.adjustment_details,n.deduction_details,
    el.school_district_code,el.school_district_basis,el.school_district_rate_bps,
    o.prior_social_security_wages_cents,o.prior_medicare_wages_cents,o.prior_futa_wages_cents,o.prior_ohio_ui_wages_cents
    FROM payroll_tax_calculations t JOIN payroll_runs r ON r.id=t.payroll_run_id
@@ -113,9 +113,18 @@ export async function recordPayment(user:string,unit:string,run:string,raw:z.inp
    regularSeconds:num(w.regular_seconds),overtimeSeconds:num(w.overtime_seconds),
    hourlyCents:num(w.hourly_cents),overtimeMultiplierBps:num(w.overtime_multiplier_bps),
    regularCents:num(w.regular_cents),overtimeCents:num(w.overtime_cents)}));
-  const statement={version:1,employeeName:row.display_name,employeeAddress:input.employeeAddress,
+  const ptoRows=await c.query<{leave_date:string;paid_seconds:number;pto_cents:string;hourly_cents:string;request_day_id:string}>(`
+     SELECT leave_date::text,paid_seconds,pto_cents::text,hourly_cents::text,request_day_id
+     FROM payroll_run_pto_lines WHERE payroll_run_id=$1 AND employee_id=$2
+     ORDER BY leave_date,id`,[run,input.employeeId]);
+   const ptoEarnings=ptoRows.rows.map(p=>({leaveDate:p.leave_date,paidSeconds:p.paid_seconds,
+     ptoCents:num(p.pto_cents),hourlyCents:num(p.hourly_cents),requestDayId:p.request_day_id}));
+   if(ptoEarnings.reduce((total,p)=>total+p.ptoCents,0)!==num(row.pto_cents) ||
+       ptoEarnings.reduce((total,p)=>total+p.paidSeconds,0)!==num(row.pto_seconds))
+     throw conflict('PTO earnings on this pay stub do not match the approved native payroll snapshot.');
+   const statement={version:2,employeeName:row.display_name,employeeAddress:input.employeeAddress,
    employerName:entity.legal_name,payDate:input.payDate,periodStart:row.period_start,periodEndExclusive:row.period_end,
-   amounts,earnings,additions:row.adjustment_details,deductions:row.deduction_details,
+   amounts,earnings,ptoEarnings,ptoCents:num(row.pto_cents),ptoSeconds:num(row.pto_seconds),additions:row.adjustment_details,deductions:row.deduction_details,
    regularSeconds:num(row.regular_seconds),overtimeSeconds:num(row.overtime_seconds),
    schoolDistrictCode:row.school_district_code,schoolDistrictBasis:row.school_district_basis,
    schoolDistrictRateBps:row.school_district_rate_bps,
