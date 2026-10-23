@@ -1,3 +1,4 @@
+import {adminPtoRequests,ptoReviewSchema,reviewPtoRequest} from './employee-pto.service.js';
 import {adminLeave} from './employee-leave.service.js';
 import {filingInputSchema,filingContext,prepareFiling,listFilings,filingDetail,reviewFiling,download941} from './payroll-filing.service.js';
 import {externalTaxSchema,recordExternalTax,listExternalTax,paymentSchema,reversalSchema,paidReportSchema,recordPayment,reversePayment,listPayments,paidReport,paymentStatement} from './payroll-payments.service.js';
@@ -255,4 +256,13 @@ adminPayrollRouter.get('/filings/:packetId/form-941',async(req,res)=>{
 
 adminPayrollRouter.get('/leave/balances',async(req,res)=>{
   res.json(await adminLeave(req.auth!.userId,unit(req)));
+});
+
+adminPayrollRouter.get('/leave/requests',async(req,res)=>{
+ res.setHeader('Cache-Control','private, no-store');
+ res.json(await adminPtoRequests(req.auth!.userId,unit(req)));
+});
+adminPayrollRouter.post('/leave/requests/:requestId/review',async(req,res)=>{
+ res.json(await reviewPtoRequest(req.auth!.userId,unit(req),
+   requireRouteParam(req,'requestId'),ptoReviewSchema.parse(req.body)));
 });
