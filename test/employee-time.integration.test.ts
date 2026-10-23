@@ -101,6 +101,11 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
     reason:'Corrected against the verified overnight job log',
   })).data;
   assert.equal(corrected.reviewStatus,'submitted');
+  // Correcting approved time reverses previous accrual until reapproved.
+  const reversed=await pool.query(`SELECT leave_type,round(sum(hours_delta),6)::text AS balance
+    FROM employee_leave_ledger WHERE time_entry_id=$1 GROUP BY leave_type`,[start.id]);
+  assert.equal(reversed.rows.length,2);
+  assert.ok(reversed.rows.every(row=>Number(row.balance)===0));
   assert.equal(corrected.workedSeconds, (105-15)*60);
   assert.equal(corrected.paidBreakSeconds,10*60);
   assert.equal(corrected.unpaidBreakSeconds,15*60);
@@ -117,6 +122,10 @@ test('v0.3 time clock, break transitions, management review, corrections and aud
   assert.equal((await reviewTimeEntry(id.manager,id.firstUnit,start.id,{
     decision:'approve',reason:'Verified after manual review',
   })).data.reviewStatus,'approved');
+  const credited=await pool.query(`SELECT leave_type,round(sum(hours_delta),6)::text AS balance
+    FROM employee_leave_ledger WHERE time_entry_id=$1 GROUP BY leave_type`,[start.id]);
+  assert.deepEqual(credited.rows.map(row=>row.leave_type).sort(),['pto','sick']);
+  assert.ok(credited.rows.every(row=>Math.abs(Number(row.balance)-0.05)<0.000001));
   const history=await getEntryHistory(id.manager,id.firstUnit,start.id);
   assert.ok(history.data.some(x=>x.action==='clock_in'));
   assert.ok(history.data.some(x=>x.action==='break_start'));
