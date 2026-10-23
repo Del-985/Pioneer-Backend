@@ -13,7 +13,24 @@ export const ptoCreateSchema=z.object({
   businessUnitId:uuid,startDate:date,endDate:date,
   requestedHours:z.number().positive().max(160).refine(v=>Number.isInteger(v*4),{message:'Request time in 15-minute increments.'}),
   note:z.string().trim().max(1000).default(''),
+  days:z.array(z.object({date,hours:z.number().positive().max(24)
+    .refine(v=>Number.isInteger(v*4),{message:'Daily leave must use 15-minute increments.'})}).strict()).min(1).max(31).optional(),
 }).strict();
+export function ptoDayAllocations(start:string,end:string,total:number,days?:Array<{date:string;hours:number}>){
+ const allocations=days??(start===end?[{date:start,hours:total}]:[]);
+ if(!allocations.length)throw new HttpError(400,'PTO_DAILY_HOURS_REQUIRED',
+   'For multiple days, enter the paid hours for each requested date.');
+ const seen=new Set<string>();
+ for(const x of allocations){
+   if(x.date<start||x.date>end||seen.has(x.date))throw new HttpError(400,'PTO_INVALID_DAILY_DATE',
+     'Each paid leave day must be unique and within the request dates.');
+   seen.add(x.date);
+ }
+ const sum=Math.round(allocations.reduce((n,x)=>n+x.hours,0)*100);
+ if(sum!==Math.round(total*100))throw new HttpError(400,'PTO_HOURS_MISMATCH',
+   'The sum of daily PTO hours must equal total hours requested.');
+ return allocations;
+}
 export const ptoReviewSchema=z.object({
   decision:z.enum(['approve','deny','cancel']),
   note:z.string().trim().max(1000).default(''),
@@ -98,6 +115,7 @@ export async function createPtoRequest(userId:string,input:z.infer<typeof ptoCre
     FROM employee_leave_policy WHERE singleton=1`);
    const notice=policy.rows[0]?.planned_notice_days??7;
    validatePtoRange(input.startDate,input.endDate,input.requestedHours,notice,detroitDate());
+   const days=ptoDayAllocations(input.startDate,input.endDate,input.requestedHours,input.days);
    const overlap=await c.query(`SELECT id FROM employee_pto_requests
      WHERE business_unit_id=$1 AND employee_id=$2 AND status IN ('pending','approved')
      AND daterange(start_date,end_date,'[]') && daterange($3::date,$4::date,'[]')
@@ -112,6 +130,12 @@ export async function createPtoRequest(userId:string,input:z.infer<typeof ptoCre
      id,business_unit_id,employee_id,start_date::text,end_date::text,
      requested_hours::text,employee_note,status,created_at,reviewed_at,reviewed_by_user_id,manager_note`,
      [input.businessUnitId,employeeId,input.startDate,input.endDate,input.requestedHours,input.note]);
+   for(const day of days){
+     await c.query(`INSERT INTO employee_pto_request_days
+       (request_id,business_unit_id,employee_id,leave_date,paid_seconds)
+       VALUES($1,$2,$3,$4,$5)`,
+       [inserted.rows[0]!.id,input.businessUnitId,employeeId,day.date,day.hours*3600]);
+   }
    await event(c,inserted.rows[0]!,userId,'submitted',input.note);
    return{data:mapRequest(inserted.rows[0]!)};
  });
@@ -139,12 +163,23 @@ export async function adminPtoRequests(userId:string,unit:string){
 export async function reviewPtoRequest(userId:string,unit:string,id:string,input:z.infer<typeof ptoReviewSchema>){
  await assertBusinessUnitPermission(userId,unit,'payroll.approve');
  return transaction(async c=>{
-   // Consistent lock ordering between employee submission and manager approval.
+   // Serialize payroll preparation and leave approvals in unit -> employee order.
+    await c.query('SELECT id FROM business_units WHERE id=$1 FOR UPDATE',[unit]);
    const found=await c.query<{employee_id:string}>(`SELECT employee_id FROM employee_pto_requests
      WHERE id=$1 AND business_unit_id=$2`,[id,unit]);
    if(!found.rows[0])throw new HttpError(404,'PTO_REQUEST_NOT_FOUND','PTO request not found.');
    await lockEmployee(c,found.rows[0].employee_id,unit);
    const row=await getRequest(c,unit,id);
+   if(input.decision==='approve'||input.decision==='cancel'){
+     const alreadyPayrolled=await c.query(`
+       SELECT run.id FROM payroll_runs run
+       JOIN employee_pto_request_days day
+         ON day.business_unit_id=run.business_unit_id
+         AND day.leave_date>=run.period_start AND day.leave_date<run.period_end
+       WHERE day.request_id=$1 AND run.status<>'void' LIMIT 1`,[id]);
+     if(alreadyPayrolled.rows[0])throw new HttpError(409,'PTO_PAYROLL_PERIOD_LOCKED',
+       'A payroll register already covers these PTO dates. Void its draft before changing approval.');
+   }
    if(input.decision==='cancel'){
      if(row.status!=='approved')throw new HttpError(409,'PTO_NOT_APPROVED','Only approved PTO can be revoked by management.');
      if(row.start_date<=detroitDate())throw new HttpError(409,'PTO_ALREADY_STARTED',

@@ -5,6 +5,7 @@ import {HttpError} from '../../lib/http-error.js';
 import {assertBusinessUnitPermission} from '../access/authorization.service.js';
 import {employeeSelf} from './employee-scheduling.service.js';
 import {calculateGrossLines,localWeekKey,type PayInput} from './payroll-math.js';
+import {payrollPtoInputs} from './payroll-pto.service.js';
 
 const uuid=z.string().uuid();
 const day=z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -141,7 +142,9 @@ export async function setPayrollRate(userId:string,unit:string,input:z.infer<typ
       WHERE l.employee_id=$1 AND t.clock_in_at >=
       ($2::date::timestamp AT TIME ZONE 'America/Detroit') AND r.status<>'void' LIMIT 1`,
       [input.employeeId,input.effectiveOn]);
-    if(active.rows.length)throw new HttpError(409,'RATE_IN_PAYROLL_RUN',
+    const usedPto=await c.query(`SELECT 1 FROM payroll_run_pto_lines p JOIN payroll_runs r ON r.id=p.payroll_run_id
+       WHERE p.employee_id=$1 AND p.leave_date >=$2::date AND r.status<>'void' LIMIT 1`,[input.employeeId,input.effectiveOn]);
+    if(active.rows.length||usedPto.rows.length)throw new HttpError(409,'RATE_IN_PAYROLL_RUN',
       'Void affected draft payroll registers before changing a rate effective in their periods.');
     const r=await c.query<{id:string}>(`
       INSERT INTO payroll_hourly_rates(business_unit_id,employee_id,effective_on,
@@ -171,7 +174,7 @@ export async function getPayrollAccounts(userId:string,unit:string){
   return{data:r.rows.map(x=>({id:x.id,code:x.code,name:x.name,
     type:x.account_type,suggested:payrollAccountCodes.includes(x.code)}))};
 }
-async function payrollInputs(c:PoolClient,unit:string,entity:string,start:string,end:string){
+async function payrollInputs(c:PoolClient,unit:string,entity:string,start:string,end:string,allowEmpty=false){
   // Fetch every approved time entry in the entity for employees linked to this
   // unit. Multiple business units with the same user are counted toward the
   // *same* weekly threshold. Unapproved hours prevent a run from closing.
@@ -194,7 +197,7 @@ async function payrollInputs(c:PoolClient,unit:string,entity:string,start:string
     throw new HttpError(409,'PAYROLL_TIME_UNAPPROVED',
       'Every time entry for these employees in this pay period must be closed and approved.');
   const target=involved.filter(t=>t.business_unit_id===unit);
-  if(!target.length)throw new HttpError(409,'PAYROLL_NO_HOURS',
+  if(!target.length&&!allowEmpty)throw new HttpError(409,'PAYROLL_NO_HOURS',
     'No approved, completed hours belong to this business in the period.');
   const ids=[...new Set(target.map(x=>x.employee_id))];
   const rateRows=await c.query<RateRow>(`
@@ -250,8 +253,11 @@ export async function preparePayroll(userId:string,unit:string,input:z.infer<typ
     if(existing.rows[0])throw new HttpError(409,'PAYROLL_PERIOD_ALREADY_COVERED',
       'A payroll register already covers this business and pay period.');
     const accounts=await accountPair(c,ctx.legal_entity_id);
-    const lines=await payrollInputs(c,unit,ctx.legal_entity_id,input.periodStart,input.periodEnd);
-    const gross=lines.reduce((a,x)=>a+x.grossCents,0);
+    const lines=await payrollInputs(c,unit,ctx.legal_entity_id,input.periodStart,input.periodEnd,true);
+    const pto=await payrollPtoInputs(c,unit,input.periodStart,input.periodEnd);
+    if(!lines.length&&!pto.length)throw new HttpError(409,'PAYROLL_NO_HOURS',
+      'This period contains no approved worked time or payable PTO.');
+    const gross=lines.reduce((a,x)=>a+x.grossCents,0)+pto.reduce((a,x)=>a+x.ptoCents,0);
     if(!Number.isSafeInteger(gross)||gross<=0)throw new HttpError(409,'PAYROLL_INVALID_TOTAL',
       'Approved hours must produce a positive wage total.');
     const reg=lines.reduce((a,x)=>a+x.regularSeconds,0),
@@ -272,14 +278,32 @@ export async function preparePayroll(userId:string,unit:string,input:z.infer<typ
        [id,unit,line.employeeId,line.id,line.rateId,line.regularSeconds,line.overtimeSeconds,
         line.hourlyCents,line.multiplierBps,line.regularCents,line.overtimeCents]);
     }
-    await log(c,userId,unit,id,'prepared',{grossCents:gross,count:lines.length,
+    for(const leave of pto){
+      await c.query(`INSERT INTO payroll_run_pto_lines(payroll_run_id,business_unit_id,employee_id,
+       request_day_id,rate_id,leave_date,paid_seconds,hourly_cents,pto_cents)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[id,unit,leave.employeeId,leave.requestDayId,
+       leave.rateId,leave.leaveDate,leave.paidSeconds,leave.hourlyCents,leave.ptoCents]);
+    }
+    await log(c,userId,unit,id,'prepared',{grossCents:gross,ptoCents:pto.reduce((n,p)=>n+p.ptoCents,0),count:lines.length,
       periodStart:input.periodStart,periodEnd:input.periodEnd});
-    return{data:{id,grossCents:gross,lineCount:lines.length,status:'draft'}};
+    return{data:{id,grossCents:gross,lineCount:lines.length,ptoLineCount:pto.length,status:'draft'}};
   });
 }
 async function verifySnapshot(c:PoolClient,run:RunRow){
   const current=await payrollInputs(c,run.business_unit_id,run.legal_entity_id,
-    run.period_start,run.period_end);
+    run.period_start,run.period_end,true);
+  const currentPto=await payrollPtoInputs(c,run.business_unit_id,run.period_start,run.period_end);
+  const savedPto=await c.query<{request_day_id:string;paid_seconds:number;hourly_cents:string;pto_cents:string;rate_id:string}>(
+    `SELECT request_day_id,paid_seconds,hourly_cents::text,pto_cents::text,rate_id
+      FROM payroll_run_pto_lines WHERE payroll_run_id=$1`,[run.id]);
+  const ptoById=new Map(savedPto.rows.map(x=>[x.request_day_id,x]));
+  if(currentPto.length!==savedPto.rows.length ||
+    currentPto.some(p=>{
+      const old=ptoById.get(p.requestDayId);
+      return !old||old.rate_id!==p.rateId||old.paid_seconds!==p.paidSeconds||
+        asNum(old.hourly_cents)!==p.hourlyCents||asNum(old.pto_cents)!==p.ptoCents;
+    }))throw new HttpError(409,'PAYROLL_PTO_STALE',
+      'PTO dates, approvals, or rates changed. Void this payroll draft and recalculate.');
   const stored=await c.query<{
     time_entry_id:string;regular_seconds:string;overtime_seconds:string;
     regular_cents:string;overtime_cents:string;rate_id:string;
@@ -320,6 +344,7 @@ export async function voidPayroll(userId:string,unit:string,id:string){
     const run=await getRunLocked(c,unit,id);
     if(run.status==='posted'||run.status==='void')
       throw new HttpError(409,'PAYROLL_LOCKED','Posted or void payroll registers cannot be discarded.');
+    await c.query('DELETE FROM payroll_run_pto_lines WHERE payroll_run_id=$1',[id]);
     await c.query('DELETE FROM payroll_run_lines WHERE payroll_run_id=$1',[id]);
     await c.query(`UPDATE payroll_runs SET status='void' WHERE id=$1`,[id]);
     await log(c,userId,unit,id,'voided',{priorStatus:run.status});
@@ -381,7 +406,25 @@ export async function getPayroll(userId:string,unit:string,id:string){
   try{
     const run=await getRunLocked(c,unit,id);
     const lines=await getLines(c,id);
-    return{data:{...mapRun(run),lines,employees:summaries(lines)}};
+    const leave=(await c.query<{id:string;employee_id:string;request_day_id:string;leave_date:string;paid_seconds:number;pto_cents:string;hourly_cents:string}>(`
+      SELECT id,employee_id,request_day_id,leave_date::text,paid_seconds,
+       pto_cents::text,hourly_cents::text FROM payroll_run_pto_lines
+      WHERE payroll_run_id=$1 ORDER BY leave_date,id`,[id])).rows.map(x=>({
+      id:x.id,employeeId:x.employee_id,requestDayId:x.request_day_id,
+      leaveDate:x.leave_date,ptoSeconds:x.paid_seconds,
+      ptoCents:asNum(x.pto_cents),hourlyCents:asNum(x.hourly_cents)}));
+    const employees=summaries(lines);
+    for(const p of leave){
+      let e=employees.find(x=>x.employeeId===p.employeeId);
+      if(!e){
+        const name=await c.query<{display_name:string}>('SELECT display_name FROM employees WHERE id=$1',[p.employeeId]);
+        e={employeeId:p.employeeId,employeeName:name.rows[0]?.display_name??'',
+          grossCents:0,regularCents:0,overtimeCents:0,regularSeconds:0,overtimeSeconds:0};
+        employees.push(e);
+      }
+      e.grossCents+=p.ptoCents;
+    }
+    return{data:{...mapRun(run),lines,ptoLines:leave,employees}};
   }finally{c.release();}
 }
 export async function myGrossStatements(userId:string,unit:string){
@@ -389,18 +432,25 @@ export async function myGrossStatements(userId:string,unit:string){
   const r=await pool.query<{
     run_id:string;period_start:string;period_end:string;status:string;
     regular_seconds:string;overtime_seconds:string;gross_cents:string;
-    regular_cents:string;overtime_cents:string;
+    regular_cents:string;overtime_cents:string;pto_cents:string;pto_seconds:string;
   }>(`SELECT run.id AS run_id,run.period_start::text,run.period_end::text,run.status,
-    sum(l.regular_seconds)::text AS regular_seconds,sum(l.overtime_seconds)::text AS overtime_seconds,
-    sum(l.gross_cents)::text AS gross_cents,sum(l.regular_cents)::text AS regular_cents,
-    sum(l.overtime_cents)::text AS overtime_cents
-    FROM payroll_run_lines l JOIN payroll_runs run ON run.id=l.payroll_run_id
-    WHERE run.business_unit_id=$1 AND l.employee_id=$2 AND run.status='posted'
+    sum(t.regular_seconds)::text AS regular_seconds,sum(t.overtime_seconds)::text AS overtime_seconds,
+    sum(t.regular_cents+t.overtime_cents+t.pto_cents)::text AS gross_cents,
+    sum(t.regular_cents)::text AS regular_cents,sum(t.overtime_cents)::text AS overtime_cents,
+    sum(t.pto_cents)::text AS pto_cents,sum(t.pto_seconds)::text AS pto_seconds
+    FROM (SELECT payroll_run_id,employee_id,regular_seconds,overtime_seconds,regular_cents,overtime_cents,
+           0::bigint AS pto_cents,0::bigint AS pto_seconds FROM payroll_run_lines
+       UNION ALL
+       SELECT payroll_run_id,employee_id,0::bigint,0::bigint,0::bigint,0::bigint,
+         pto_cents,paid_seconds::bigint FROM payroll_run_pto_lines) t
+    JOIN payroll_runs run ON run.id=t.payroll_run_id
+    WHERE run.business_unit_id=$1 AND t.employee_id=$2 AND run.status='posted'
     GROUP BY run.id ORDER BY run.period_start DESC LIMIT 50`,[unit,employeeId]);
   return{data:r.rows.map(x=>({
     runId:x.run_id,periodStart:x.period_start,periodEnd:x.period_end,
     regularSeconds:asNum(x.regular_seconds),overtimeSeconds:asNum(x.overtime_seconds),
     regularCents:asNum(x.regular_cents),overtimeCents:asNum(x.overtime_cents),
+    ptoCents:asNum(x.pto_cents),ptoSeconds:asNum(x.pto_seconds),
     grossCents:asNum(x.gross_cents),status:'recorded_in_books',
     netPay:null,paymentStatus:'not_recorded',
   }))};

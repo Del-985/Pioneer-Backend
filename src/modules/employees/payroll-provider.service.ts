@@ -141,9 +141,14 @@ async function sourceLines(c:PoolClient,runId:string){
       sum(l.overtime_seconds)::text AS overtime_seconds,
       sum(l.regular_cents)::text AS regular_cents,
       sum(l.overtime_cents)::text AS overtime_cents,
-      sum(l.gross_cents)::text AS gross_cents
-    FROM payroll_run_lines l JOIN employees e ON e.id=l.employee_id
-    WHERE l.payroll_run_id=$1
+      sum(l.regular_cents+l.overtime_cents+l.pto_cents)::text AS gross_cents
+    FROM (
+      SELECT employee_id,regular_seconds,overtime_seconds,regular_cents,overtime_cents,
+        0::bigint AS pto_cents FROM payroll_run_lines WHERE payroll_run_id=$1
+      UNION ALL
+      SELECT employee_id,0::bigint,0::bigint,0::bigint,0::bigint,pto_cents
+        FROM payroll_run_pto_lines WHERE payroll_run_id=$1
+    ) l JOIN employees e ON e.id=l.employee_id
     GROUP BY l.employee_id,e.display_name ORDER BY e.display_name,l.employee_id`,
     [runId]);
   return r.rows.map(row=>({

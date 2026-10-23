@@ -31,7 +31,7 @@ type Run={id:string;legal_entity_id:string;business_unit_id:string;
  period_start:string;period_end:string;status:string;gross_cents:string};
 type BaseRow={employee_id:string;employee_name:string;
  regular_seconds:string;overtime_seconds:string;regular_cents:string;overtime_cents:string;
- gross_cents:string;source_line_count:string};
+ gross_cents:string;pto_cents:string;pto_seconds:string;source_line_count:string};
 type Adjustment={id:string;employee_id:string;employee_name:string;
  category:string;amount_cents:string;description:string;service_date:string};
 type Deduction={id:string;employee_id:string;deduction_code:string;label:string;
@@ -39,7 +39,7 @@ type Deduction={id:string;employee_id:string;deduction_code:string;label:string;
  authorization_recorded:boolean;authorization_note:string|null};
 export type NativeLine={
  employeeId:string;employeeName:string;regularSeconds:number;overtimeSeconds:number;
- regularCents:number;overtimeCents:number;adjustmentCents:number;
+ regularCents:number;overtimeCents:number;ptoCents:number;ptoSeconds:number;adjustmentCents:number;
  reimbursementCents:number;voluntaryDeductionCents:number;grossCents:number;
  deductionDetails:Array<{ruleId:string;code:string;label:string;amountCents:number}>;
  adjustmentDetails:Array<{adjustmentId:string;category:string;amountCents:number;description:string}>;
@@ -49,7 +49,7 @@ export type NativeLine={
 type Calculation={
  id:string;legal_entity_id:string;business_unit_id:string;payroll_run_id:string;
  status:'draft'|'approved'|'void';source_digest:string;
- regular_cents:string;overtime_cents:string;wage_adjustments_cents:string;
+ regular_cents:string;overtime_cents:string;pto_cents:string;wage_adjustments_cents:string;
  gross_wages_cents:string;voluntary_deductions_cents:string;
  reimbursement_cents:string;employee_count:number;
  notes:string|null;calculation_version:string;
@@ -59,7 +59,7 @@ type Calculation={
 type NativeStored={
  employee_id:string;employee_name:string;regular_seconds:string;
  overtime_seconds:string;regular_cents:string;overtime_cents:string;
- adjustment_cents:string;gross_cents:string;voluntary_deduction_cents:string;
+ pto_cents:string;pto_seconds:string;adjustment_cents:string;gross_cents:string;voluntary_deduction_cents:string;
  reimbursement_cents:string;deduction_details:NativeLine['deductionDetails'];
  adjustment_details:NativeLine['adjustmentDetails'];
 };
@@ -82,7 +82,7 @@ async function transaction<T>(fn:(c:PoolClient)=>Promise<T>):Promise<T>{
 }
 const baseSql=`SELECT n.id,n.legal_entity_id,n.business_unit_id,n.payroll_run_id,n.status,
   n.source_digest,n.regular_cents::text,n.overtime_cents::text,
-  n.wage_adjustments_cents::text,n.gross_wages_cents::text,
+  n.pto_cents::text,n.wage_adjustments_cents::text,n.gross_wages_cents::text,
   n.voluntary_deductions_cents::text,n.reimbursement_cents::text,
   n.employee_count,n.notes,n.calculation_version,n.created_at,n.approved_at,
   n.voided_at,r.period_start::text,r.period_end::text,r.status AS payroll_run_status
@@ -93,7 +93,7 @@ function mapCalculation(n:Calculation){
   id:n.id,runId:n.payroll_run_id,businessUnitId:n.business_unit_id,
   status:n.status,payrollRunStatus:n.payroll_run_status,
   periodStart:n.period_start,periodEnd:n.period_end,
-  regularCents:numeric(n.regular_cents),overtimeCents:numeric(n.overtime_cents),
+  regularCents:numeric(n.regular_cents),overtimeCents:numeric(n.overtime_cents),ptoCents:numeric(n.pto_cents),
   wageAdjustmentsCents:numeric(n.wage_adjustments_cents),
   grossWagesCents:numeric(n.gross_wages_cents),
   voluntaryDeductionsCents:numeric(n.voluntary_deductions_cents),
@@ -127,20 +127,27 @@ async function activeRun(c:PoolClient,unit:string,runId:string,lock=true){
 }
 async function snapshot(c:PoolClient,run:Run){
  const base=await c.query<BaseRow>(`
-  SELECT l.employee_id,e.display_name AS employee_name,
-    sum(l.regular_seconds)::text regular_seconds,
-    sum(l.overtime_seconds)::text overtime_seconds,
-    sum(l.regular_cents)::text regular_cents,
-    sum(l.overtime_cents)::text overtime_cents,
-    sum(l.gross_cents)::text gross_cents,
-    count(*)::text source_line_count
-  FROM payroll_run_lines l
-  JOIN employees e ON e.id=l.employee_id AND e.business_unit_id=l.business_unit_id
-  WHERE l.payroll_run_id=$1 AND l.business_unit_id=$2
-  GROUP BY l.employee_id,e.display_name
-  ORDER BY l.employee_id`,[run.id,run.business_unit_id]);
- if(!base.rows.length)throw new HttpError(409,'NATIVE_MISSING_TIMESHEETS',
-  'A native calculation requires at least one approved and snapshotted time entry.');
+   SELECT l.employee_id,e.display_name AS employee_name,
+     sum(l.regular_seconds)::text regular_seconds,
+     sum(l.overtime_seconds)::text overtime_seconds,
+     sum(l.regular_cents)::text regular_cents,
+     sum(l.overtime_cents)::text overtime_cents,
+     sum(l.pto_cents)::text pto_cents,sum(l.pto_seconds)::text pto_seconds,
+     sum(l.regular_cents+l.overtime_cents+l.pto_cents)::text gross_cents,
+     count(*)::text source_line_count
+   FROM (
+     SELECT employee_id,business_unit_id,regular_seconds,overtime_seconds,
+       regular_cents,overtime_cents,0::bigint pto_cents,0::bigint pto_seconds
+     FROM payroll_run_lines WHERE payroll_run_id=$1 AND business_unit_id=$2
+     UNION ALL
+     SELECT employee_id,business_unit_id,0::bigint,0::bigint,0::bigint,0::bigint,
+       pto_cents,paid_seconds::bigint
+     FROM payroll_run_pto_lines WHERE payroll_run_id=$1 AND business_unit_id=$2
+   ) l JOIN employees e ON e.id=l.employee_id AND e.business_unit_id=l.business_unit_id
+   GROUP BY l.employee_id,e.display_name
+   ORDER BY l.employee_id`,[run.id,run.business_unit_id]);
+  if(!base.rows.length)throw new HttpError(409,'NATIVE_MISSING_TIMESHEETS',
+  'A native calculation requires approved worked hours or PTO earnings.');
  const sum=base.rows.reduce((n,row)=>safe(n+numeric(row.gross_cents)),0);
  if(sum!==numeric(run.gross_cents))throw new HttpError(409,'NATIVE_SOURCE_RUN_MISMATCH',
   'The source payroll register gross total does not agree with its approved time entries.');
@@ -188,7 +195,9 @@ async function snapshot(c:PoolClient,run:Run){
    .reduce((n,a)=>safe(n+a.amountCents),0));
   const regularCents=b?numeric(b.regular_cents):0;
   const overtimeCents=b?numeric(b.overtime_cents):0;
-  const grossCents=safe(regularCents+overtimeCents+adjustmentCents);
+  const ptoCents=b?numeric(b.pto_cents):0;
+  const ptoSeconds=b?numeric(b.pto_seconds):0;
+  const grossCents=safe(regularCents+overtimeCents+ptoCents+adjustmentCents);
   if(grossCents<0)throw new HttpError(409,'NATIVE_NEGATIVE_GROSS',
    'Posted wage corrections exceed the wages available for an employee.');
   const deductionDetails=rules.rows.filter(r=>r.employee_id===employeeId && r.is_active)
@@ -209,7 +218,7 @@ async function snapshot(c:PoolClient,run:Run){
    employeeId,employeeName:employeeNames.get(employeeId)??'',
    regularSeconds:b?numeric(b.regular_seconds):0,
    overtimeSeconds:b?numeric(b.overtime_seconds):0,
-   regularCents,overtimeCents,adjustmentCents,reimbursementCents,
+   regularCents,overtimeCents,ptoCents,ptoSeconds,adjustmentCents,reimbursementCents,
    grossCents,voluntaryDeductionCents,deductionDetails,adjustmentDetails,
    taxWithholdingCents:null,netPayCents:null,paymentStatus:'not_processed' as const,
    remainingBeforeTaxesCents:grossCents-voluntaryDeductionCents,
@@ -220,17 +229,19 @@ async function snapshot(c:PoolClient,run:Run){
  const totals={
   regularCents:safe(lines.reduce((n,l)=>safe(n+l.regularCents),0)),
   overtimeCents:safe(lines.reduce((n,l)=>safe(n+l.overtimeCents),0)),
+  ptoCents:safe(lines.reduce((n,l)=>safe(n+l.ptoCents),0)),
   wageAdjustmentsCents:safe(lines.reduce((n,l)=>safe(n+l.adjustmentCents),0)),
   grossWagesCents:safe(lines.reduce((n,l)=>safe(n+l.grossCents),0)),
   reimbursementCents:safe(lines.reduce((n,l)=>safe(n+l.reimbursementCents),0)),
   voluntaryDeductionsCents:safe(lines.reduce((n,l)=>safe(n+l.voluntaryDeductionCents),0)),
   employeeCount:lines.length,
  };
- const sourceDigest=dig({version:'native-earnings-v1',runId:run.id,
+ const sourceDigest=dig({version:'native-earnings-v2-pto',runId:run.id,
   grossCents:run.gross_cents,status:run.status==='void'?'void':'active',
   rows:lines.map(l=>({employeeId:l.employeeId,
    regularSeconds:l.regularSeconds,overtimeSeconds:l.overtimeSeconds,
    regularCents:l.regularCents,overtimeCents:l.overtimeCents,
+    ptoCents:l.ptoCents,ptoSeconds:l.ptoSeconds,
    adjustments:l.adjustmentDetails,deductions:l.deductionDetails})),
   reimbursementAmounts:lines.map(l=>l.reimbursementCents),
  });
@@ -242,7 +253,7 @@ function dbLine(x:NativeStored):NativeLine{
  return{
   employeeId:x.employee_id,employeeName:x.employee_name,
   regularSeconds:numeric(x.regular_seconds),overtimeSeconds:numeric(x.overtime_seconds),
-  regularCents:numeric(x.regular_cents),overtimeCents:numeric(x.overtime_cents),
+  regularCents:numeric(x.regular_cents),overtimeCents:numeric(x.overtime_cents),ptoCents:numeric(x.pto_cents),ptoSeconds:numeric(x.pto_seconds),
   adjustmentCents:numeric(x.adjustment_cents),grossCents,
   voluntaryDeductionCents,reimbursementCents:numeric(x.reimbursement_cents),
   deductionDetails:x.deduction_details,adjustmentDetails:x.adjustment_details,
@@ -254,7 +265,8 @@ async function getLines(c:PoolClient,id:string){
  const q=await c.query<NativeStored>(`
   SELECT l.employee_id,e.display_name employee_name,
    l.regular_seconds::text,l.overtime_seconds::text,l.regular_cents::text,
-   l.overtime_cents::text,l.adjustment_cents::text,l.gross_cents::text,
+   l.overtime_cents::text,l.pto_cents::text,l.pto_seconds::text,
+    l.adjustment_cents::text,l.gross_cents::text,
    l.voluntary_deduction_cents::text,l.reimbursement_cents::text,
    l.deduction_details,l.adjustment_details
    FROM payroll_native_employee_lines l
@@ -344,12 +356,12 @@ export async function prepareNativeCalculation(user:string,unit:string,runId:str
   const q=await c.query<{id:string}>(`
     INSERT INTO payroll_native_calculations(
      legal_entity_id,business_unit_id,payroll_run_id,source_digest,
-     regular_cents,overtime_cents,wage_adjustments_cents,gross_wages_cents,
+     regular_cents,overtime_cents,pto_cents,wage_adjustments_cents,gross_wages_cents,
      reimbursement_cents,voluntary_deductions_cents,employee_count,
-     created_by_user_id,notes)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+     created_by_user_id,notes,calculation_version)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'native-earnings-v2-pto') RETURNING id`,
    [run.legal_entity_id,unit,runId,source.sourceDigest,
-    source.totals.regularCents,source.totals.overtimeCents,
+    source.totals.regularCents,source.totals.overtimeCents,source.totals.ptoCents,
     source.totals.wageAdjustmentsCents,source.totals.grossWagesCents,
     source.totals.reimbursementCents,source.totals.voluntaryDeductionsCents,
     source.totals.employeeCount,user,input.notes??null]);
@@ -357,11 +369,12 @@ export async function prepareNativeCalculation(user:string,unit:string,runId:str
   for(const line of source.lines)await c.query(`
     INSERT INTO payroll_native_employee_lines(calculation_id,business_unit_id,
       employee_id,regular_seconds,overtime_seconds,regular_cents,overtime_cents,
-      adjustment_cents,gross_cents,voluntary_deduction_cents,
+      pto_cents,pto_seconds,adjustment_cents,gross_cents,voluntary_deduction_cents,
       reimbursement_cents,deduction_details,adjustment_details)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb)`,
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb)`,
    [id,unit,line.employeeId,line.regularSeconds,line.overtimeSeconds,
-    line.regularCents,line.overtimeCents,line.adjustmentCents,line.grossCents,
+    line.regularCents,line.overtimeCents,line.ptoCents,line.ptoSeconds,
+    line.adjustmentCents,line.grossCents,
     line.voluntaryDeductionCents,line.reimbursementCents,
     JSON.stringify(line.deductionDetails),JSON.stringify(line.adjustmentDetails)]);
   await audit(c,user,unit,id,'prepared',{runId,sourceDigest:source.sourceDigest,
@@ -438,11 +451,11 @@ export async function employeeNativePreview(user:string,unit:string){
  const employeeId=await employeeSelf(user,unit);
  const q=await pool.query<{
   id:string;period_start:string;period_end:string;approved_at:Date;
-  regular_cents:string;overtime_cents:string;adjustment_cents:string;
+  regular_cents:string;overtime_cents:string;pto_cents:string;adjustment_cents:string;
   gross_cents:string;voluntary_deduction_cents:string;
   reimbursement_cents:string;
  }>(`SELECT n.id,r.period_start::text,r.period_end::text,n.approved_at,
-    l.regular_cents::text,l.overtime_cents::text,l.adjustment_cents::text,
+    l.regular_cents::text,l.overtime_cents::text,l.pto_cents::text,l.adjustment_cents::text,
     l.gross_cents::text,l.voluntary_deduction_cents::text,l.reimbursement_cents::text
     FROM payroll_native_employee_lines l
     JOIN payroll_native_calculations n ON n.id=l.calculation_id
