@@ -10,11 +10,20 @@ export async function leaveBalances(employeeId:string, businessUnitId:string) {
       round(coalesce(sum(hours_delta) FILTER (WHERE event_type='reversed'),0),6)::text AS reversed
     FROM employee_leave_ledger WHERE business_unit_id=$1 AND employee_id=$2
     GROUP BY leave_type`,[businessUnitId,employeeId]);
+  const usage=await pool.query<{used:string}>(`SELECT coalesce(-sum(hours_delta),0)::text AS used
+     FROM employee_pto_usage WHERE business_unit_id=$1 AND employee_id=$2`,[businessUnitId,employeeId]);
+  const pending=await pool.query<{reserved:string}>(`SELECT coalesce(sum(requested_hours),0)::text AS reserved
+     FROM employee_pto_requests WHERE business_unit_id=$1 AND employee_id=$2 AND status='pending'`,[businessUnitId,employeeId]);
+  const used=Number(usage.rows[0]?.used??0);
+  const reserved=Number(pending.rows[0]?.reserved??0);
   const types=['pto','sick'] as const;
   const balances=Object.fromEntries(types.map(type=>{
     const row=result.rows.find(r=>r.leave_type===type);
-    return [type,{balanceHours:Number(row?.balance??0),earnedHours:Number(row?.earned??0),
-      reversedHours:Number(row?.reversed??0)}];
+    const accrued=Number(row?.balance??0);
+    const banked=accrued-(type==='pto'?used:0);
+    return [type,{balanceHours:banked-(type==='pto'?reserved:0),bankedHours:banked,
+      pendingHours:type==='pto'?reserved:0,usedHours:type==='pto'?used:0,
+      earnedHours:Number(row?.earned??0),reversedHours:Number(row?.reversed??0)}];
   }));
   return balances;
 }
